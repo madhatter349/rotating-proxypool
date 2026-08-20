@@ -106,6 +106,7 @@ export class Repository {
          latency_ms = $2,
          exit_ip = COALESCE($3, exit_ip),
          supports_https = $4,
+         success_rate = (success_count + 1)::double precision / (success_count + failure_count + 1),
          updated_at = now()
        WHERE id = $1
        RETURNING ${PROXY_COLUMNS}`,
@@ -129,6 +130,7 @@ export class Repository {
          consecutive_failures = consecutive_failures + 1,
          last_checked = now(),
          last_error = $2,
+         success_rate = success_count::double precision / (success_count + failure_count + 1),
          updated_at = now()
        WHERE id = $1
        RETURNING ${PROXY_COLUMNS}`,
