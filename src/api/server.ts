@@ -21,7 +21,7 @@ interface AdminState {
 }
 
 export async function buildApi(state: AdminState): Promise<Fastify.FastifyInstance> {
-  const app = Fastify({ logger: false, disableRequestLogging: true });
+  const app = Fastify({ logger: false });
 
   const dashboardHtml = await readFile(dashboardPath, "utf8");
 
