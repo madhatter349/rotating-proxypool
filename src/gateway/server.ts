@@ -1,0 +1,374 @@
+import net from "node:net";
+import { timingSafeEqual } from "node:crypto";
+import type { PoolManager } from "../pool/manager.js";
+import { connectUpstream, tunnelThrough } from "./upstream.js";
+
+export interface GatewayStats {
+  connections: number;
+  connectRequests: number;
+  httpRequests: number;
+  authFailures: number;
+  upstreamFailures: number;
+  retries: number;
+  success: number;
+  startedAt: string;
+}
+
+export interface GatewayOptions {
+  host?: string;
+  port: number;
+  authRequired: boolean;
+  username: string;
+  password: string;
+  pool: PoolManager;
+  connectTimeoutMs: number;
+  requestTimeoutMs: number;
+  maxHeaderBytes: number;
+  maxRetries: number;
+  maxConnections: number;
+  blockPrivate: boolean;
+  log: (msg: string) => void;
+}
+
+interface RequestHead {
+  method: string;
+  target: string;
+  version: string;
+  headers: Record<string, string>;
+  raw: Buffer;
+  leftover: Buffer;
+}
+
+function privateBlocked(host: string): boolean {
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
+  const oct = host.split(".").map((o) => Number(o));
+  const a = oct[0] ?? 0;
+  const b = oct[1] ?? 0;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  return false;
+}
+
+export class GatewayServer {
+  readonly stats: GatewayStats = {
+    connections: 0,
+    connectRequests: 0,
+    httpRequests: 0,
+    authFailures: 0,
+    upstreamFailures: 0,
+    retries: 0,
+    success: 0,
+    startedAt: new Date().toISOString(),
+  };
+
+  private readonly server: net.Server;
+  private readonly sockets = new Set<net.Socket>();
+  private closed = false;
+
+  constructor(private readonly opts: GatewayOptions) {
+    this.server = net.createServer((socket) => this.handleConnection(socket));
+    this.server.on("error", (err) => opts.log(`gateway server error: ${err.message}`));
+  }
+
+  listen(): Promise<number> {
+    return new Promise((resolve, reject) => {
+      this.server.once("error", reject);
+      this.server.listen(this.opts.port, this.opts.host ?? "0.0.0.0", () => {
+        const addr = this.server.address();
+        const port = typeof addr === "object" && addr ? addr.port : this.opts.port;
+        this.server.removeListener("error", reject);
+        resolve(port);
+      });
+    });
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    for (const socket of this.sockets) socket.destroy();
+    this.sockets.clear();
+    await new Promise<void>((resolve) => this.server.close(() => resolve()));
+  }
+
+  private handleConnection(socket: net.Socket): void {
+    if (this.opts.maxConnections > 0 && this.sockets.size >= this.opts.maxConnections) {
+      socket.destroy();
+      return;
+    }
+    this.sockets.add(socket);
+    this.stats.connections++;
+    socket.setTimeout(this.opts.requestTimeoutMs);
+    socket.on("error", () => undefined);
+    socket.on("close", () => {
+      this.sockets.delete(socket);
+    });
+
+    let buf = Buffer.alloc(0);
+    const onData = (chunk: Buffer) => {
+      buf = Buffer.concat([buf, chunk]);
+      if (buf.length > this.opts.maxHeaderBytes) {
+        socket.removeListener("data", onData);
+        this.writeError(socket, 431, "Request Header Fields Too Large");
+        socket.destroy();
+        return;
+      }
+      const headerEnd = buf.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      socket.removeListener("data", onData);
+      const raw = buf.subarray(0, headerEnd + 4);
+      const leftover = buf.subarray(headerEnd + 4);
+      const head = this.parseHead(raw, leftover);
+      if (!head) {
+        this.writeError(socket, 400, "Bad Request");
+        socket.destroy();
+        return;
+      }
+      socket.setTimeout(0);
+      void this.route(socket, head);
+    };
+    socket.on("data", onData);
+  }
+
+  private parseHead(raw: Buffer, leftover: Buffer): RequestHead | null {
+    const text = raw.toString("latin1");
+    const lines = text.split("\r\n");
+    const requestLine = lines[0] ?? "";
+    const parts = requestLine.split(" ");
+    if (parts.length < 3) return null;
+    const method = parts[0]!;
+    const target = parts[1]!;
+    const version = parts[2]!;
+    if (!/^[A-Z]+$/.test(method) || !/^HTTP\/\d\.\d$/.test(version)) return null;
+    const headers: Record<string, string> = {};
+    for (const line of lines.slice(1)) {
+      if (!line) continue;
+      const idx = line.indexOf(":");
+      if (idx === -1) continue;
+      headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
+    }
+    return { method, target, version, headers, raw, leftover };
+  }
+
+  private async route(socket: net.Socket, head: RequestHead): Promise<void> {
+    if (!this.checkAuth(head)) {
+      this.stats.authFailures++;
+      this.writeError(socket, 407, "Proxy Authentication Required", true);
+      socket.destroy();
+      return;
+    }
+    if (head.method === "CONNECT") {
+      this.stats.connectRequests++;
+      await this.handleConnect(socket, head);
+      return;
+    }
+    if (/^https?:\/\//i.test(head.target)) {
+      this.stats.httpRequests++;
+      await this.handlePlainHttp(socket, head);
+      return;
+    }
+    this.writeError(socket, 400, "Bad Request");
+    socket.destroy();
+  }
+
+  private checkAuth(head: RequestHead): boolean {
+    if (!this.opts.authRequired) return true;
+    if (!this.opts.username || !this.opts.password) return false; // fail closed
+    const auth = head.headers["proxy-authorization"] ?? head.headers["authorization"];
+    if (!auth || !auth.toLowerCase().startsWith("basic ")) return false;
+    let decoded: string;
+    try {
+      decoded = Buffer.from(auth.slice(6).trim(), "base64").toString("utf8");
+    } catch {
+      return false;
+    }
+    const sep = decoded.indexOf(":");
+    if (sep === -1) return false;
+    const user = decoded.slice(0, sep);
+    const pass = decoded.slice(sep + 1);
+    return safeEqual(user, this.opts.username) && safeEqual(pass, this.opts.password);
+  }
+
+  private async handleConnect(socket: net.Socket, head: RequestHead): Promise<void> {
+    const target = parseHostPort(head.target);
+    if (!target) {
+      this.writeError(socket, 400, "Bad Request");
+      socket.destroy();
+      return;
+    }
+    if (this.opts.blockPrivate && privateBlocked(target.host)) {
+      this.writeError(socket, 403, "Forbidden");
+      socket.destroy();
+      return;
+    }
+
+    const attempts = this.opts.maxRetries + 1;
+    for (let i = 0; i < attempts; i++) {
+      const upstream = this.opts.pool.selectUpstream();
+      if (!upstream) {
+        this.writeError(socket, 502, "Bad Gateway: no healthy upstream");
+        socket.destroy();
+        return;
+      }
+      try {
+        const { socket: upstreamSocket } = await tunnelThrough(
+          { host: upstream.host, port: upstream.port },
+          target,
+          this.opts.connectTimeoutMs
+        );
+        socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        this.pipe(socket, upstreamSocket);
+        this.stats.success++;
+        void this.opts.pool.onGatewaySuccess(upstream.id);
+        return;
+      } catch (err) {
+        if (i < attempts - 1) this.stats.retries++;
+        this.stats.upstreamFailures++;
+        void this.opts.pool.onGatewayFailure(upstream.id, (err as Error).message);
+      }
+    }
+    this.writeError(socket, 502, "Bad Gateway");
+    socket.destroy();
+  }
+
+  private async handlePlainHttp(socket: net.Socket, head: RequestHead): Promise<void> {
+    const attempts = this.opts.maxRetries + 1;
+    for (let i = 0; i < attempts; i++) {
+      const upstream = this.opts.pool.selectUpstream();
+      if (!upstream) {
+        this.writeError(socket, 502, "Bad Gateway: no healthy upstream");
+        socket.destroy();
+        return;
+      }
+      let upstreamSocket;
+      try {
+        upstreamSocket = await connectUpstream(
+          { host: upstream.host, port: upstream.port },
+          this.opts.connectTimeoutMs
+        );
+        const forwarded = this.rewriteForwardedHead(head);
+        upstreamSocket.write(forwarded.raw);
+        if (head.leftover.length) upstreamSocket.write(head.leftover);
+        this.pipe(socket, upstreamSocket);
+        this.stats.success++;
+        void this.opts.pool.onGatewaySuccess(upstream.id);
+        return;
+      } catch (err) {
+        if (i < attempts - 1) this.stats.retries++;
+        this.stats.upstreamFailures++;
+        void this.opts.pool.onGatewayFailure(upstream.id, (err as Error).message);
+        if (upstreamSocket) upstreamSocket.destroy();
+      }
+    }
+    this.writeError(socket, 502, "Bad Gateway");
+    socket.destroy();
+  }
+
+  /**
+   * Rebuild the forwarded request head for an upstream HTTP proxy:
+   * request line kept absolute-form, hop-by-hop headers stripped, connection closed.
+   */
+  private rewriteForwardedHead(head: RequestHead): { raw: Buffer } {
+    const hopByHop = new Set([
+      "connection",
+      "proxy-connection",
+      "keep-alive",
+      "proxy-authenticate",
+      "proxy-authorization",
+      "te",
+      "trailer",
+      "transfer-encoding",
+      "upgrade",
+    ]);
+    const lines = head.raw.toString("latin1").split("\r\n");
+    const out: string[] = [];
+    const method = head.method;
+    const target = head.target;
+    out.push(`${method} ${target} ${head.version}`);
+    for (const line of lines.slice(1)) {
+      if (!line) continue;
+      const idx = line.indexOf(":");
+      const key = idx === -1 ? "" : line.slice(0, idx).trim().toLowerCase();
+      if (hopByHop.has(key)) continue;
+      out.push(line);
+    }
+    if (!head.headers.host) {
+      try {
+        const u = new URL(head.target);
+        out.push(`Host: ${u.host}`);
+      } catch {
+        // leave as-is
+      }
+    }
+    out.push("Connection: close");
+    return { raw: Buffer.from(out.join("\r\n") + "\r\n\r\n", "latin1") };
+  }
+
+  private pipe(client: net.Socket, upstream: net.Socket): void {
+    client.pipe(upstream);
+    upstream.pipe(client);
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      client.unpipe(upstream);
+      upstream.unpipe(client);
+      client.destroy();
+      upstream.destroy();
+    };
+    upstream.on("close", cleanup);
+    upstream.on("error", cleanup);
+    client.on("error", () => undefined);
+    client.on("close", cleanup);
+  }
+
+  private writeError(
+    socket: net.Socket,
+    code: number,
+    message: string,
+    proxyAuth = false
+  ): void {
+    const reason = reasonPhrase(code);
+    let body = `HTTP/1.1 ${code} ${reason}\r\n`;
+    if (proxyAuth) body += `Proxy-Authenticate: Basic realm="proxypool"\r\n`;
+    body += `Content-Length: 0\r\nConnection: close\r\n\r\n`;
+    socket.write(body);
+  }
+}
+
+export function parseHostPort(target: string): { host: string; port: number } | null {
+  const idx = target.lastIndexOf(":");
+  if (idx === -1) return null;
+  const host = target.slice(0, idx);
+  const portStr = target.slice(idx + 1);
+  if (!host) return null;
+  if (!/^\d+$/.test(portStr)) return null;
+  const port = Number(portStr);
+  if (port < 1 || port > 65535) return null;
+  // host may be bracketed IPv6
+  const cleanHost = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  if (!/^[a-z0-9.:\-_]+$/i.test(cleanHost)) return null;
+  return { host: cleanHost, port };
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
+
+function reasonPhrase(code: number): string {
+  const map: Record<number, string> = {
+    400: "Bad Request",
+    403: "Forbidden",
+    407: "Proxy Authentication Required",
+    431: "Request Header Fields Too Large",
+    502: "Bad Gateway",
+  };
+  return map[code] ?? "Error";
+}

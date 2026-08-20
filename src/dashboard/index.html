@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ProxyPool Dashboard</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #0d1117; color: #c9d1d9; font-size: 14px;
+  }
+  header {
+    padding: 16px 24px; border-bottom: 1px solid #21262d; display: flex;
+    align-items: center; justify-content: space-between;
+  }
+  header h1 { font-size: 16px; margin: 0; color: #f0f6fc; }
+  header .sub { color: #8b949e; font-size: 12px; }
+  main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .card {
+    background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 14px;
+  }
+  .card .label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  .card .value { font-size: 26px; font-weight: 700; margin-top: 6px; color: #f0f6fc; }
+  .card .value.good { color: #3fb950; }
+  .card .value.warn { color: #d29922; }
+  .card .value.bad { color: #f85149; }
+  section { margin-top: 28px; }
+  section h2 { font-size: 14px; color: #f0f6fc; border-bottom: 1px solid #21262d; padding-bottom: 8px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #21262d; font-size: 12px; }
+  th { color: #8b949e; font-weight: 600; }
+  .bar { background: #21262d; border-radius: 4px; overflow: hidden; width: 100px; height: 8px; }
+  .bar > div { height: 100%; background: #3fb950; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+  .pill.healthy { background: rgba(63,185,80,.15); color: #3fb950; }
+  .pill.degraded { background: rgba(210,153,34,.15); color: #d29922; }
+  .pill.quarantined { background: rgba(248,81,73,.15); color: #f85149; }
+  .pill.pending, .pill.discovered { background: rgba(139,148,158,.15); color: #8b949e; }
+  .pill.dead { background: rgba(248,81,73,.25); color: #f85149; }
+  .err { color: #f85149; }
+  .muted { color: #8b949e; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+  .row .item { display: flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.ok { background: #3fb950; }
+  .dot.bad { background: #f85149; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>rotating-proxypool</h1>
+    <div class="sub" id="subtitle">loading&hellip;</div>
+  </div>
+  <div class="row">
+    <div class="item"><span class="dot ok"></span><span id="gateway-status">gateway?</span></div>
+    <div class="item"><span class="dot" id="db-dot"></span><span id="db-status">db?</span></div>
+  </div>
+</header>
+<main>
+  <div class="cards">
+    <div class="card"><div class="label">Total Candidates</div><div class="value" id="c-total">-</div></div>
+    <div class="card"><div class="label">Active Pool</div><div class="value good" id="c-active">-</div></div>
+    <div class="card"><div class="label">Healthy</div><div class="value good" id="c-healthy">-</div></div>
+    <div class="card"><div class="label">Quarantined</div><div class="value warn" id="c-quarantined">-</div></div>
+    <div class="card"><div class="label">Median Latency</div><div class="value" id="c-latency">-</div></div>
+    <div class="card"><div class="label">Validation Rate</div><div class="value" id="c-rate">-</div></div>
+  </div>
+
+  <section>
+    <h2>Protocol Breakdown</h2>
+    <div id="protocols" class="muted">-</div>
+  </section>
+
+  <section>
+    <h2>Sources</h2>
+    <table id="sources"><thead><tr><th>Name</th><th>Kind</th><th>Fetches</th><th>Candidates</th><th>Working</th><th>Rate</th><th>Last Fetched</th><th>Errors</th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <section>
+    <h2>Top Healthy Proxies</h2>
+    <table id="proxies"><thead><tr><th>Host</th><th>Port</th><th>Proto</th><th>Score</th><th>Latency</th><th>Success Rate</th><th>Exit IP</th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <section>
+    <h2>Recent Failures</h2>
+    <table id="failures"><thead><tr><th>Time</th><th>Proxy</th><th>Error</th></tr></thead><tbody></tbody></table>
+  </section>
+</main>
+
+<script>
+const fmt = (n) => n == null ? "-" : Number(n).toLocaleString();
+const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : "-";
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+async function refresh() {
+  try {
+    const [stats, proxies, ready] = await Promise.all([
+      fetch("/stats").then(r => r.json()),
+      fetch("/api/proxies/active").then(r => r.json()),
+      fetch("/ready").then(r => r.json()).catch(() => ({status: "down"})),
+    ]);
+    const s = stats;
+    document.getElementById("subtitle").textContent = "last refresh " + fmtTime(s.lastRefresh);
+    document.getElementById("c-total").textContent = fmt(s.total);
+    document.getElementById("c-active").textContent = fmt(s.activePool);
+    document.getElementById("c-healthy").textContent = fmt(s.byStatus.healthy);
+    document.getElementById("c-quarantined").textContent = fmt(s.byStatus.quarantined);
+    document.getElementById("c-latency").textContent = s.medianLatencyMs == null ? "-" : s.medianLatencyMs + " ms";
+    document.getElementById("c-rate").textContent = (s.validationSuccessRate * 100).toFixed(1) + "%";
+
+    const g = s.gateway;
+    document.getElementById("gateway-status").textContent =
+      `gateway: ${fmt(g.connectRequests)} CONNECT / ${fmt(g.httpRequests)} HTTP, ` +
+      `${fmt(g.authFailures)} auth fails, ${fmt(g.upstreamFailures)} upstream fails, ${fmt(g.success)} ok`;
+
+    const dbUp = ready && ready.db;
+    document.getElementById("db-dot").className = "dot " + (dbUp ? "ok" : "bad");
+    document.getElementById("db-status").textContent = dbUp ? "db: ok" : "db: down";
+
+    const protos = Object.entries(s.byProtocol || {});
+    document.getElementById("protocols").innerHTML = protos.length
+      ? protos.map(([k, v]) => `<span style="margin-right:14px">${esc(k)}: <b>${v}</b></span>`).join("")
+      : "no data";
+
+    const srcTbody = document.querySelector("#sources tbody");
+    srcTbody.innerHTML = (s.sources || []).map(sr =>
+      `<tr>
+        <td>${esc(sr.name)}</td><td>${esc(sr.kind)}</td>
+        <td>${fmt(sr.fetch_count)}</td><td>${fmt(sr.candidates)}</td>
+        <td>${fmt(sr.working)}</td>
+        <td><div class="bar"><div style="width:${Math.round((sr.validation_rate||0)*100)}%"></div></div></td>
+        <td>${fmtTime(sr.last_fetched)}</td>
+        <td class="${sr.error_count ? "err" : ""}">${fmt(sr.error_count)}</td>
+      </tr>`).join("") || `<tr><td colspan="8" class="muted">no sources yet</td></tr>`;
+
+    const pxTbody = document.querySelector("#proxies tbody");
+    pxTbody.innerHTML = (proxies.proxies || []).slice(0, 50).map(p =>
+      `<tr>
+        <td>${esc(p.host)}</td><td>${p.port}</td><td>${esc(p.protocol)}</td>
+        <td>${p.score}</td>
+        <td>${p.latency_ms == null ? "-" : p.latency_ms + " ms"}</td>
+        <td>${(p.success_rate*100).toFixed(0)}%</td>
+        <td>${esc(p.exit_ip || "-")}</td>
+      </tr>`).join("") || `<tr><td colspan="7" class="muted">no healthy proxies yet</td></tr>`;
+
+    const flTbody = document.querySelector("#failures tbody");
+    flTbody.innerHTML = (s.recentFailures || []).map(f =>
+      `<tr><td>${fmtTime(f.at)}</td><td>${esc(f.host)}:${f.port} (${esc(f.protocol)})</td><td class="err">${esc(f.error)}</td></tr>`
+    ).join("") || `<tr><td colspan="3" class="muted">no recent failures</td></tr>`;
+  } catch (e) {
+    document.getElementById("subtitle").textContent = "dashboard error: " + e;
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>
