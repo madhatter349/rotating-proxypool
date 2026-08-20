@@ -98,9 +98,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&
 
 async function refresh() {
   try {
-    const [stats, proxies, ready] = await Promise.all([
+    const [stats, ready] = await Promise.all([
       fetch("/stats").then(r => r.json()),
-      fetch("/api/proxies/active").then(r => r.json()),
       fetch("/ready").then(r => r.json()).catch(() => ({status: "down"})),
     ]);
     const s = stats;
@@ -138,7 +137,7 @@ async function refresh() {
       </tr>`).join("") || `<tr><td colspan="8" class="muted">no sources yet</td></tr>`;
 
     const pxTbody = document.querySelector("#proxies tbody");
-    pxTbody.innerHTML = (proxies.proxies || []).slice(0, 50).map(p =>
+    pxTbody.innerHTML = (s.topProxies || []).map(p =>
       `<tr>
         <td>${esc(p.host)}</td><td>${p.port}</td><td>${esc(p.protocol)}</td>
         <td>${p.score}</td>

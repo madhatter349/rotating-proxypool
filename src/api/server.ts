@@ -136,11 +136,30 @@ async function buildStats(state: AdminState) {
   const lastRefresh = state.pool.getLastRefreshAt();
   const recentFailures = state.pool.getRecentFailures().slice(0, 20);
 
+  const topProxies = [...healthy]
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        (a.latency_ms ?? Number.POSITIVE_INFINITY) -
+          (b.latency_ms ?? Number.POSITIVE_INFINITY)
+    )
+    .slice(0, 10)
+    .map((p) => ({
+      host: p.host,
+      port: p.port,
+      protocol: p.protocol,
+      score: p.score,
+      latency_ms: p.latency_ms,
+      success_rate: p.success_rate,
+      exit_ip: p.exit_ip,
+    }));
+
   return {
     total,
     byStatus,
     byProtocol,
     activePool: healthy.length,
+    topProxies,
     medianLatencyMs: median,
     validationSuccessRate,
     totalChecks,
