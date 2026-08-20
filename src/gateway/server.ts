@@ -1,6 +1,7 @@
 import net from "node:net";
 import { timingSafeEqual } from "node:crypto";
 import type { PoolManager } from "../pool/manager.js";
+import { connectWithTimeout } from "../validate/connect.js";
 import { connectUpstream, tunnelThrough } from "./upstream.js";
 
 export interface GatewayStats {
@@ -216,7 +217,7 @@ export class GatewayServer {
       }
       try {
         const { socket: upstreamSocket } = await tunnelThrough(
-          { host: upstream.host, port: upstream.port },
+          { host: upstream.host, port: upstream.port, protocol: upstream.protocol },
           target,
           this.opts.connectTimeoutMs
         );
@@ -244,15 +245,21 @@ export class GatewayServer {
         socket.destroy();
         return;
       }
+      const isSocks =
+        upstream.protocol === "socks4" || upstream.protocol === "socks5";
       let upstreamSocket;
       try {
-        upstreamSocket = await connectUpstream(
-          { host: upstream.host, port: upstream.port },
-          this.opts.connectTimeoutMs
-        );
-        const forwarded = this.rewriteForwardedHead(head);
+        const target = this.parseTarget(head.target);
+        upstreamSocket = target
+          ? await connectUpstream(
+              { host: upstream.host, port: upstream.port, protocol: upstream.protocol },
+              target,
+              this.opts.connectTimeoutMs
+            )
+          : await connectWithTimeout(upstream.host, upstream.port, this.opts.connectTimeoutMs);
+        const forwarded = this.rewriteForwardedHead(head, isSocks);
         upstreamSocket.write(forwarded.raw);
-        if (head.leftover.length) upstreamSocket.write(head.leftover);
+        if (head.leftover.length && !isSocks) upstreamSocket.write(head.leftover);
         this.pipe(socket, upstreamSocket);
         this.stats.success++;
         void this.opts.pool.onGatewaySuccess(upstream.id);
@@ -269,10 +276,12 @@ export class GatewayServer {
   }
 
   /**
-   * Rebuild the forwarded request head for an upstream HTTP proxy:
-   * request line kept absolute-form, hop-by-hop headers stripped, connection closed.
+   * Rebuild the forwarded request head for an upstream proxy. For http/https
+   * upstreams the request line stays absolute-form (the proxy routes it). For
+   * socks upstreams a tunnel to the origin already exists, so the request line
+   * is origin-form. Hop-by-hop headers are stripped and connection closed.
    */
-  private rewriteForwardedHead(head: RequestHead): { raw: Buffer } {
+  private rewriteForwardedHead(head: RequestHead, isSocks: boolean): { raw: Buffer } {
     const hopByHop = new Set([
       "connection",
       "proxy-connection",
@@ -286,9 +295,16 @@ export class GatewayServer {
     ]);
     const lines = head.raw.toString("latin1").split("\r\n");
     const out: string[] = [];
-    const method = head.method;
-    const target = head.target;
-    out.push(`${method} ${target} ${head.version}`);
+    let target = head.target;
+    if (isSocks) {
+      try {
+        const u = new URL(head.target);
+        target = u.pathname + u.search || "/";
+      } catch {
+        // leave as-is
+      }
+    }
+    out.push(`${head.method} ${target} ${head.version}`);
     for (const line of lines.slice(1)) {
       if (!line) continue;
       const idx = line.indexOf(":");
@@ -306,6 +322,17 @@ export class GatewayServer {
     }
     out.push("Connection: close");
     return { raw: Buffer.from(out.join("\r\n") + "\r\n\r\n", "latin1") };
+  }
+
+  /** Parse an absolute-form URL request target into host/port for SOCKS tunneling. */
+  private parseTarget(target: string): { host: string; port: number } | null {
+    try {
+      const u = new URL(target);
+      if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+      return { host: u.hostname, port: u.port ? Number(u.port) : u.protocol === "https:" ? 443 : 80 };
+    } catch {
+      return null;
+    }
   }
 
   private pipe(client: net.Socket, upstream: net.Socket): void {

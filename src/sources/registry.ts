@@ -60,12 +60,6 @@ export class SourceRegistry {
     const results: SourceRefreshResult[] = [];
     const queue = [...sources];
 
-    async function worker(_: number) {
-      // placeholder to satisfy eslint unused-var expectations
-      void _;
-    }
-    void worker;
-
     const runWorker = async () => {
       for (;;) {
         const src = queue.shift();

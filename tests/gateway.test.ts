@@ -14,6 +14,8 @@ import {
   startHttpProxy,
   startHttpsEchoTarget,
   startHttpEchoTarget,
+  startSocks4Proxy,
+  startSocks5Proxy,
 } from "./mocks/proxies.js";
 
 const CREDS = { username: "testuser", password: "testpass" };
@@ -35,7 +37,7 @@ describe("gateway", () => {
   });
 
   async function buildGateway(opts: {
-    proxies?: Array<{ port: number; protocol?: "http" }>;
+    proxies?: Array<{ port: number; protocol?: "http" | "socks4" | "socks5" }>;
     blockPrivate?: boolean;
     maxRetries?: number;
   } = {}) {
@@ -215,6 +217,55 @@ describe("gateway", () => {
       CREDS
     );
     assert.equal(res.statusCode, 502);
+  });
+
+  it("tunnels HTTPS through a healthy SOCKS5 upstream", async () => {
+    const proxy = await startSocks5Proxy();
+    teardown.push(() => proxy.close());
+    const { gateway, port } = await buildGateway({
+      proxies: [{ port: proxy.port, protocol: "socks5" }],
+    });
+    teardown.push(() => gateway.close());
+
+    const res = await withTimeout(
+      httpsGetViaProxy("127.0.0.1", port, `https://127.0.0.1:${echo.port}/`, CREDS),
+      20000
+    );
+    assert.equal(res.statusCode, 200);
+    assert.equal(gateway.stats.connectRequests, 1);
+  });
+
+  it("tunnels HTTPS through a healthy SOCKS4 upstream", async () => {
+    const proxy = await startSocks4Proxy();
+    teardown.push(() => proxy.close());
+    const { gateway, port } = await buildGateway({
+      proxies: [{ port: proxy.port, protocol: "socks4" }],
+    });
+    teardown.push(() => gateway.close());
+
+    const res = await withTimeout(
+      httpsGetViaProxy("127.0.0.1", port, `https://127.0.0.1:${echo.port}/`, CREDS),
+      20000
+    );
+    assert.equal(res.statusCode, 200);
+    assert.equal(gateway.stats.connectRequests, 1);
+  });
+
+  it("forwards plain HTTP through a SOCKS5 upstream", async () => {
+    const proxy = await startSocks5Proxy();
+    teardown.push(() => proxy.close());
+    const { gateway, port } = await buildGateway({
+      proxies: [{ port: proxy.port, protocol: "socks5" }],
+    });
+    teardown.push(() => gateway.close());
+
+    const res = await withTimeout(
+      httpGetViaProxy("127.0.0.1", port, `http://127.0.0.1:${plainEcho.port}/hello`, CREDS),
+      20000
+    );
+    assert.equal(res.statusCode, 200);
+    assert.ok(res.body.includes("/hello"));
+    assert.equal(gateway.stats.httpRequests, 1);
   });
 
   it("shuts down gracefully", async () => {

@@ -65,6 +65,7 @@
     <div class="card"><div class="label">Total Candidates</div><div class="value" id="c-total">-</div></div>
     <div class="card"><div class="label">Active Pool</div><div class="value good" id="c-active">-</div></div>
     <div class="card"><div class="label">Healthy</div><div class="value good" id="c-healthy">-</div></div>
+    <div class="card"><div class="label">Degraded</div><div class="value warn" id="c-degraded">-</div></div>
     <div class="card"><div class="label">Quarantined</div><div class="value warn" id="c-quarantined">-</div></div>
     <div class="card"><div class="label">Median Latency</div><div class="value" id="c-latency">-</div></div>
     <div class="card"><div class="label">Validation Rate</div><div class="value" id="c-rate">-</div></div>
@@ -107,6 +108,7 @@ async function refresh() {
     document.getElementById("c-total").textContent = fmt(s.total);
     document.getElementById("c-active").textContent = fmt(s.activePool);
     document.getElementById("c-healthy").textContent = fmt(s.byStatus.healthy);
+    document.getElementById("c-degraded").textContent = fmt(s.byStatus.degraded);
     document.getElementById("c-quarantined").textContent = fmt(s.byStatus.quarantined);
     document.getElementById("c-latency").textContent = s.medianLatencyMs == null ? "-" : s.medianLatencyMs + " ms";
     document.getElementById("c-rate").textContent = (s.validationSuccessRate * 100).toFixed(1) + "%";

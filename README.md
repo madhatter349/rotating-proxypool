@@ -13,7 +13,9 @@ failed attempts.
 - **Score**: 0–100 reliability score (success rate, latency, freshness, stability).
 - **Lifecycle**: healthy → degraded → quarantined → retest → healthy | dead; stale rows cleaned up.
 - **Gateway**: authenticated forward proxy (HTTP + HTTPS via CONNECT) with weighted-random
-  rotation, retries, private-IP blocking, and fail-closed auth.
+  rotation, retries, private-IP blocking, and fail-closed auth. The gateway tunnels through
+  both HTTP **and SOCKS** healthy upstreams (protocol-matched handshake), so the whole pool
+  is usable.
 - **Ops**: `/health`, `/ready`, `/stats`, admin API, and a live dashboard.
 
 ## Architecture
@@ -95,7 +97,7 @@ All settings are environment variables (see `.env.example`). Notable ones:
 npm run dev        # tsx watch
 npm run typecheck  # tsc --noEmit (both tsconfigs)
 npm run lint       # eslint --max-warnings 0
-npm test           # node:test via tsx (66 tests)
+npm test           # node:test via tsx (69 tests)
 ```
 
 ## Deploying to Railway

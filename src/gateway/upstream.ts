@@ -1,9 +1,16 @@
 import net from "node:net";
-import { connectWithTimeout, ProxyHandshakeError } from "../validate/connect.js";
+import {
+  connectWithTimeout,
+  httpConnect,
+  socks4Connect,
+  socks5Connect,
+} from "../validate/connect.js";
+import type { ProxyProtocol } from "../types.js";
 
 export interface Endpoint {
   host: string;
   port: number;
+  protocol?: ProxyProtocol;
 }
 
 export interface UpstreamResult {
@@ -11,9 +18,28 @@ export interface UpstreamResult {
   latencyMs: number;
 }
 
+function tunnelHandshake(
+  socket: net.Socket,
+  upstream: Endpoint,
+  target: Endpoint,
+  connectTimeoutMs: number
+): Promise<void> {
+  switch (upstream.protocol) {
+    case "socks4":
+      return socks4Connect(socket, target.host, target.port, connectTimeoutMs);
+    case "socks5":
+      return socks5Connect(socket, target.host, target.port, connectTimeoutMs);
+    default:
+      // http / https upstreams all speak HTTP CONNECT.
+      return httpConnect(socket, target.host, target.port, connectTimeoutMs);
+  }
+}
+
 /**
- * Open a tunneled connection to `target` through an upstream proxy using
- * HTTP CONNECT. Returns the established socket (both directions open).
+ * Open a tunneled connection to `target` through an upstream proxy, using the
+ * handshake appropriate to the upstream protocol (HTTP CONNECT for http/https,
+ * SOCKS greeting + CONNECT for socks4/socks5). Returns the established socket
+ * (both directions open, reply bytes fully consumed).
  */
 export async function tunnelThrough(
   upstream: Endpoint,
@@ -23,18 +49,7 @@ export async function tunnelThrough(
   const started = Date.now();
   const socket = await connectWithTimeout(upstream.host, upstream.port, connectTimeoutMs);
   try {
-    const hostPort = `${target.host}:${target.port}`;
-    const response = await requestProxy(
-      socket,
-      `CONNECT ${hostPort} HTTP/1.1\r\nHost: ${hostPort}\r\nProxy-Connection: keep-alive\r\n\r\n`,
-      connectTimeoutMs
-    );
-    if (response.status !== 200) {
-      throw new ProxyHandshakeError(
-        `upstream CONNECT returned HTTP ${response.status}`,
-        "http-handshake"
-      );
-    }
+    await tunnelHandshake(socket, upstream, target, connectTimeoutMs);
     socket.setTimeout(0);
     return { socket, latencyMs: Date.now() - started };
   } catch (err) {
@@ -43,72 +58,21 @@ export async function tunnelThrough(
   }
 }
 
-export interface ProxyResponse {
-  status: number;
-  headers: Record<string, string>;
-}
-
-function requestProxy(
-  socket: net.Socket,
-  request: string,
-  timeoutMs: number
-): Promise<ProxyResponse> {
-  return new Promise((resolve, reject) => {
-    let buf = Buffer.alloc(0);
-    let settled = false;
-    const timeout = setTimeout(() => {
-      finish(new ProxyHandshakeError("upstream: timeout waiting for response", "http-handshake"));
-    }, timeoutMs);
-    const finish = (err?: Error, res?: ProxyResponse) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      socket.setTimeout(0);
-      if (err) reject(err);
-      else resolve(res!);
-    };
-
-    socket.setTimeout(timeoutMs, () =>
-      finish(new ProxyHandshakeError("upstream: socket timeout", "http-handshake"))
-    );
-    socket.once("error", (err) =>
-      finish(new ProxyHandshakeError(`upstream: ${err.message}`, "http-handshake"))
-    );
-    socket.on("data", function onData(chunk: Buffer) {
-      buf = Buffer.concat([buf, chunk]);
-      const headerEnd = buf.indexOf("\r\n\r\n");
-      if (headerEnd === -1) {
-        if (buf.length > 64 * 1024) {
-          finish(new ProxyHandshakeError("upstream: response too large", "http-handshake"));
-        }
-        return;
-      }
-      socket.removeListener("data", onData);
-      const statusLine = buf.subarray(0, headerEnd).toString("latin1").split("\r\n")[0] ?? "";
-      const status = Number(statusLine.split(" ")[1] ?? 0);
-      const headers: Record<string, string> = {};
-      const lines = buf.subarray(0, headerEnd).toString("latin1").split("\r\n").slice(1);
-      for (const line of lines) {
-        const idx = line.indexOf(":");
-        if (idx === -1) continue;
-        headers[line.slice(0, idx).trim().toLowerCase()] = line.slice(idx + 1).trim();
-      }
-      finish(undefined, { status, headers });
-    });
-    socket.once("close", () =>
-      finish(new ProxyHandshakeError("upstream: socket closed", "http-handshake"))
-    );
-    socket.write(request);
-  });
-}
-
 /**
- * Connect a client socket to an upstream HTTP proxy and forward the exact
- * request head (already in absolute-form) for plain HTTP proxying.
+ * Open a socket to an upstream proxy ready to receive a plain HTTP request.
+ * For http/https upstreams this is a raw TCP connection (absolute-form is
+ * forwarded to the proxy). For socks4/socks5 upstreams the SOCKS CONNECT
+ * tunnel to `target` is established first (origin-form will be forwarded).
  */
 export async function connectUpstream(
   upstream: Endpoint,
+  target: Endpoint,
   connectTimeoutMs: number
 ): Promise<net.Socket> {
+  const isSocks = upstream.protocol === "socks4" || upstream.protocol === "socks5";
+  if (isSocks) {
+    const { socket } = await tunnelThrough(upstream, target, connectTimeoutMs);
+    return socket;
+  }
   return connectWithTimeout(upstream.host, upstream.port, connectTimeoutMs);
 }

@@ -70,11 +70,22 @@ PostgreSQL with a single migration (`src/db/migrations/001_init.sql`):
 ## Status
 
 - [x] Core implementation (sources, validation, scoring, lifecycle, gateway, API, scheduler)
-- [x] Test suite (66 tests: parser, scoring, lifecycle, rotator, config, fetcher,
+- [x] Test suite (69 tests: parser, scoring, lifecycle, rotator, config, fetcher,
       validator, gateway, manager) — all green
 - [x] Lint / typecheck / build green
-- [ ] Docs (this file, README, AGENTS)
-- [ ] Dockerfile, railway.toml, GitHub Actions CI
-- [ ] Push to GitHub
-- [ ] Deploy to Railway + Postgres + domains/TCP proxy
-- [ ] Verify production endpoints and rotation
+- [x] Docs (this file, README, AGENTS)
+- [x] Dockerfile, railway.toml, GitHub Actions CI
+- [x] Push to GitHub
+- [x] Deploy to Railway + Postgres + domains/TCP proxy
+- [x] Verify production endpoints and rotation
+
+## Production notes
+
+- Deployed on Railway as `proxy-gateway` (public HTTPS domain for API/dashboard +
+  TCP proxy task on `PROXY_PORT=8081` for the forward-proxy gateway), backed by a
+  Railway Postgres service.
+- The gateway is protocol-aware: healthy upstreams are tunneled with the handshake
+  matching their protocol (HTTP CONNECT for http/https, SOCKS greeting + CONNECT for
+  socks4/socks5), and absolute-form plain HTTP is rewritten to origin-form through
+  SOCKS tunnels. This lets the full pool (HTTP + SOCKS) serve traffic instead of only
+  the HTTP subset.
