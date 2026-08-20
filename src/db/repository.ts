@@ -302,7 +302,8 @@ export class Repository {
       `SELECT
          percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms)::text AS median,
          (SELECT COUNT(*)::text FROM proxies) AS total,
-         (SELECT COUNT(*)::text FROM proxies WHERE success_count > 0) AS successes`
+         (SELECT COUNT(*)::text FROM proxies WHERE success_count > 0) AS successes
+       FROM proxies`
     );
     const total = Number(rows[0]?.total ?? 0);
     const successes = Number(rows[0]?.successes ?? 0);
