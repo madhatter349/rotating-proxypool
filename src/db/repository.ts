@@ -371,9 +371,9 @@ export class Repository {
            ((SELECT COUNT(*)::double precision FROM proxies
              WHERE source = sources.name AND status IN ('healthy', 'degraded')) / $2::double precision)
          ELSE 0 END,
-         error_count = error_count + CASE WHEN $4 IS NOT NULL THEN 1 ELSE 0 END,
-         last_error = $4,
-         last_success = CASE WHEN $4 IS NULL THEN now() ELSE last_success END,
+         error_count = error_count + CASE WHEN $4::text IS NOT NULL THEN 1 ELSE 0 END,
+         last_error = $4::text,
+         last_success = CASE WHEN $4::text IS NULL THEN now() ELSE last_success END,
          updated_at = now()
        WHERE id = $1`,
       [sourceId, stats.candidates, stats.unique, stats.error ?? null]
