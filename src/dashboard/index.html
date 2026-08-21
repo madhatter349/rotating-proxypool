@@ -3,38 +3,88 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ProxyPool Dashboard</title>
+<title>rotating-proxypool — Self-maintaining rotating proxy gateway</title>
+<meta name="description" content="A self-hosted rotating proxy gateway. Discover public HTTP/SOCKS proxies, validated with real HTTPS traffic, served through one authenticated endpoint." />
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   body {
     margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    background: #0d1117; color: #c9d1d9; font-size: 14px;
+    background: #0d1117; color: #c9d1d9; font-size: 14px; line-height: 1.6;
   }
   header {
     padding: 16px 24px; border-bottom: 1px solid #21262d; display: flex;
-    align-items: center; justify-content: space-between;
+    align-items: center; justify-content: space-between; position: sticky; top: 0;
+    background: rgba(13,17,23,.92); backdrop-filter: blur(6px); z-index: 10;
   }
-  header h1 { font-size: 16px; margin: 0; color: #f0f6fc; }
+  header .brand { display: flex; align-items: center; gap: 10px; }
+  header .logo {
+    width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #3fb950, #1f6feb); color: #0d1117; font-weight: 800;
+  }
+  header h1 { font-size: 15px; margin: 0; color: #f0f6fc; letter-spacing: -.01em; }
   header .sub { color: #8b949e; font-size: 12px; }
-  main { padding: 24px; max-width: 1200px; margin: 0 auto; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  header nav { display: flex; gap: 18px; }
+  header nav a { color: #8b949e; text-decoration: none; font-size: 12px; }
+  header nav a:hover { color: #f0f6fc; }
+  .status-row { display: flex; gap: 14px; align-items: center; }
+  .item { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.ok { background: #3fb950; box-shadow: 0 0 6px #3fb95088; }
+  .dot.bad { background: #f85149; box-shadow: 0 0 6px #f8514988; }
+  .dot.pending { background: #d29922; }
+  main { max-width: 1080px; margin: 0 auto; padding: 0 24px 60px; }
+  .hero { padding: 56px 0 24px; text-align: center; }
+  .hero .badge {
+    display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 11px;
+    background: rgba(63,185,80,.12); color: #3fb950; border: 1px solid #3fb95033; margin-bottom: 16px;
+  }
+  .hero h2 { font-size: 40px; margin: 0 0 12px; color: #f0f6fc; letter-spacing: -.03em; }
+  .hero p { max-width: 640px; margin: 0 auto 28px; color: #8b949e; font-size: 16px; }
+  .hero .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 8px;
+    text-decoration: none; font-size: 14px; border: 1px solid #21262d; color: #f0f6fc;
+    background: #161b22; transition: border-color .15s, background .15s;
+  }
+  .btn.primary { background: #238636; border-color: #2ea043; }
+  .btn.primary:hover { background: #2ea043; }
+  .btn:hover { border-color: #8b949e; }
+  .quick-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 40px; }
   .card {
-    background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 14px;
+    background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 14px 16px;
   }
   .card .label { color: #8b949e; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
-  .card .value { font-size: 26px; font-weight: 700; margin-top: 6px; color: #f0f6fc; }
+  .card .value { font-size: 24px; font-weight: 700; margin-top: 4px; color: #f0f6fc; }
   .card .value.good { color: #3fb950; }
   .card .value.warn { color: #d29922; }
   .card .value.bad { color: #f85149; }
-  section { margin-top: 28px; }
-  section h2 { font-size: 14px; color: #f0f6fc; border-bottom: 1px solid #21262d; padding-bottom: 8px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #21262d; font-size: 12px; }
+  .card .value.small { font-size: 15px; }
+  section { margin-top: 56px; scroll-margin-top: 70px; }
+  section > h3 { font-size: 22px; color: #f0f6fc; margin: 0 0 6px; letter-spacing: -.02em; }
+  section > .lede { color: #8b949e; margin: 0 0 20px; font-size: 14px; max-width: 700px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } header nav { display: none; } }
+  .panel { background: #161b22; border: 1px solid #21262d; border-radius: 10px; padding: 20px; }
+  .panel h4 { margin: 0 0 12px; font-size: 13px; color: #f0f6fc; }
+  pre {
+    background: #0d1117; border: 1px solid #21262d; border-radius: 8px; padding: 14px 16px;
+    overflow-x: auto; font-size: 12.5px; line-height: 1.55; color: #e6edf3; margin: 0;
+  }
+  code, .kbd {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #21262d; padding: 1px 6px; border-radius: 5px; font-size: 12px; color: #e6edf3;
+  }
+  .c-grn { color: #3fb950; } .c-blu { color: #58a6ff; } .c-ylw { color: #d29922; }
+  .c-org { color: #f0883e; } .c-pur { color: #bc8cff; } .c-dim { color: #8b949e; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #21262d; font-size: 12.5px; }
   th { color: #8b949e; font-weight: 600; }
-  .bar { background: #21262d; border-radius: 4px; overflow: hidden; width: 100px; height: 8px; }
+  td code { background: none; padding: 0; }
+  .bar { background: #21262d; border-radius: 4px; overflow: hidden; width: 90px; height: 8px; }
   .bar > div { height: 100%; background: #3fb950; }
-  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+  .pill { padding: 2px 8px; border-radius: 10px; font-size: 11px; white-space: nowrap; }
   .pill.healthy { background: rgba(63,185,80,.15); color: #3fb950; }
   .pill.degraded { background: rgba(210,153,34,.15); color: #d29922; }
   .pill.quarantined { background: rgba(248,81,73,.15); color: #f85149; }
@@ -42,76 +92,301 @@
   .pill.dead { background: rgba(248,81,73,.25); color: #f85149; }
   .err { color: #f85149; }
   .muted { color: #8b949e; }
-  .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
-  .row .item { display: flex; align-items: center; gap: 6px; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
-  .dot.ok { background: #3fb950; }
-  .dot.bad { background: #f85149; }
+  .endpoint { border: 1px solid #21262d; border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
+  .endpoint .head { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #161b22; }
+  .endpoint .method { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 5px; }
+  .method.get { background: rgba(88,166,255,.15); color: #58a6ff; }
+  .method.post { background: rgba(63,185,80,.15); color: #3fb950; }
+  .endpoint .path { font-size: 13px; color: #e6edf3; }
+  .endpoint .desc { color: #8b949e; font-size: 12px; margin-left: auto; }
+  .endpoint pre { border: 0; border-top: 1px solid #21262d; border-radius: 0; }
+  .steps { counter-reset: step; display: grid; gap: 14px; }
+  .step { display: flex; gap: 14px; align-items: flex-start; }
+  .step .num {
+    flex: 0 0 30px; height: 30px; border-radius: 50%; background: #1f6feb22; color: #58a6ff;
+    display: grid; place-items: center; font-weight: 700; font-size: 14px; border: 1px solid #1f6feb55;
+  }
+  .step .body h4 { margin: 0 0 4px; font-size: 14px; color: #f0f6fc; }
+  .step .body p { margin: 0; color: #8b949e; font-size: 13px; }
+  .feature-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+  .feature { border: 1px solid #21262d; border-radius: 10px; padding: 16px; background: #161b22; }
+  .feature .ic { font-size: 20px; margin-bottom: 8px; }
+  .feature h5 { margin: 0 0 4px; font-size: 14px; color: #f0f6fc; }
+  .feature p { margin: 0; color: #8b949e; font-size: 12.5px; }
+  .conn-box { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .conn-box code { font-size: 13px; }
+  footer { border-top: 1px solid #21262d; padding: 24px; text-align: center; color: #484f58; font-size: 12px; }
+  .flash { animation: flash 2s ease-out; }
+  @keyframes flash { 0% { background: #23863644; } 100% { background: transparent; } }
 </style>
 </head>
 <body>
 <header>
-  <div>
-    <h1>rotating-proxypool</h1>
-    <div class="sub" id="subtitle">loading&hellip;</div>
+  <div class="brand">
+    <div class="logo">R</div>
+    <div>
+      <h1>rotating-proxypool</h1>
+      <div class="sub">Self-maintaining rotating proxy gateway</div>
+    </div>
   </div>
-  <div class="row">
-    <div class="item"><span class="dot ok"></span><span id="gateway-status">gateway?</span></div>
-    <div class="item"><span class="dot" id="db-dot"></span><span id="db-status">db?</span></div>
+  <nav>
+    <a href="#getting-started">Getting Started</a>
+    <a href="#api-reference">API Reference</a>
+    <a href="#how-it-works">How it works</a>
+    <a href="#live-dashboard">Live Dashboard</a>
+  </nav>
+  <div class="status-row">
+    <div class="item"><span class="dot pending" id="gateway-dot"></span><span id="gateway-status">gateway…</span></div>
+    <div class="item"><span class="dot pending" id="db-dot"></span><span id="db-status">db…</span></div>
   </div>
 </header>
+
 <main>
-  <div class="cards">
-    <div class="card"><div class="label">Total Candidates</div><div class="value" id="c-total">-</div></div>
+  <!-- HERO -->
+  <div class="hero">
+    <div class="badge">● LIVE · self-maintaining pool</div>
+    <h2>A rotating proxy pool that maintains itself.</h2>
+    <p>
+      Continuously discovers public HTTP &amp; SOCKS proxies from 28 GitHub sources,
+      validates each with real HTTPS traffic, scores &amp; ranks them, and serves you
+      through a single authenticated endpoint with automatic rotation and retry.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="#getting-started">Start proxying</a>
+      <a class="btn" href="#live-dashboard">View live status</a>
+    </div>
+  </div>
+
+  <!-- QUICK STATS -->
+  <div class="quick-stats">
     <div class="card"><div class="label">Active Pool</div><div class="value good" id="c-active">-</div></div>
     <div class="card"><div class="label">Healthy</div><div class="value good" id="c-healthy">-</div></div>
     <div class="card"><div class="label">Degraded</div><div class="value warn" id="c-degraded">-</div></div>
-    <div class="card"><div class="label">Quarantined</div><div class="value warn" id="c-quarantined">-</div></div>
     <div class="card"><div class="label">Median Latency</div><div class="value" id="c-latency">-</div></div>
     <div class="card"><div class="label">Validation Rate</div><div class="value" id="c-rate">-</div></div>
+    <div class="card"><div class="label">Total Candidates</div><div class="value small" id="c-total">-</div></div>
+    <div class="card"><div class="label">Gateway Success</div><div class="value" id="c-gateway-ok">-</div></div>
   </div>
 
-  <section>
-    <h2>Protocol Breakdown</h2>
-    <div id="protocols" class="muted">-</div>
-  </section>
+  <!-- GETTING STARTED -->
+  <section id="getting-started">
+    <h3>Getting Started</h3>
+    <p class="lede">Route your traffic through the pool in under a minute. Everything below is live — connection details are pulled from the running service.</p>
 
-  <section>
-    <h2>Gateway Reliability</h2>
-    <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
-      <div class="card"><div class="label">Origin First Byte</div><div class="value" id="gr-rate">-</div></div>
-      <div class="card"><div class="label">Tunnels Established</div><div class="value" id="gr-tunnels">-</div></div>
-      <div class="card"><div class="label">Early Closes</div><div class="value warn" id="gr-early">-</div></div>
-      <div class="card"><div class="label">First-Attempt</div><div class="value" id="gr-first">-</div></div>
-      <div class="card"><div class="label">Retry-Recovered</div><div class="value" id="gr-retry">-</div></div>
-      <div class="card"><div class="label">P50 / P90 / P95</div><div class="value" id="gr-lat">-</div></div>
-      <div class="card"><div class="label">Timeouts</div><div class="value warn" id="gr-timeouts">-</div></div>
-      <div class="card"><div class="label">Reqs by Proto</div><div class="value" id="gr-proto">-</div></div>
-      <div class="card"><div class="label">Hot Pool</div><div class="value good" id="gr-hot">-</div></div>
-      <div class="card"><div class="label">Exploit/Explore</div><div class="value" id="gr-exp">-</div></div>
+    <div class="panel" style="margin-bottom:20px">
+      <h4>Connection details</h4>
+      <div class="conn-box">
+        <span class="muted">Proxy:</span>
+        <code><span class="c-blu" id="meta-proxy">…</span></code>
+        <span class="muted">· Auth required:</span>
+        <code id="meta-auth">…</code>
+        <span class="muted">· Username:</span>
+        <code class="c-ylw" id="meta-user">…</code>
+      </div>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="num">1</div>
+        <div class="body">
+          <h4>curl — HTTPS through the pool</h4>
+          <p>Your real exit IP is on the right.</p>
+          <pre id="ex-curl">loading…</pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">2</div>
+        <div class="body">
+          <h4>Python (requests)</h4>
+          <p>Point <span class="kbd">proxies</span> at the gateway and rotate automatically.</p>
+          <pre id="ex-py">loading…</pre>
+        </div>
+      </div>
+      <div class="step">
+        <div class="num">3</div>
+        <div class="body">
+          <h4>Node.js (https-proxy-agent)</h4>
+          <p>Works with any <span class="kbd">http(s).request</span> or fetch wrapper.</p>
+          <pre id="ex-node">loading…</pre>
+        </div>
+      </div>
     </div>
   </section>
 
-  <section>
-    <h2>Sources</h2>
-    <table id="sources"><thead><tr><th>Name</th><th>Kind</th><th>Fetches</th><th>Candidates</th><th>Working</th><th>Rate</th><th>Prod Suc</th><th>Last Fetched</th><th>Errors</th></tr></thead><tbody></tbody></table>
+  <!-- API REFERENCE -->
+  <section id="api-reference">
+    <h3>API Reference</h3>
+    <p class="lede">
+      The management API and status endpoints. <span class="kbd">/api/*</span> routes require
+      <span class="kbd">Authorization: Bearer &lt;ADMIN_TOKEN&gt;</span>. The status and docs
+      endpoints are public and contain no secrets.
+    </p>
+
+    <div class="endpoint">
+      <div class="head"><span class="method get">GET</span><span class="path">/health</span><span class="desc">liveness probe</span></div>
+      <pre><span class="c-blu">curl</span> https://<span id="ex-host">…</span>/health
+<span class="c-dim">// → {"status":"ok","uptimeSec":…,"version":"1.0.0","time":"…"}</span></pre>
+    </div>
+
+    <div class="endpoint">
+      <div class="head"><span class="method get">GET</span><span class="path">/ready</span><span class="desc">readiness + pool size</span></div>
+      <pre><span class="c-blu">curl</span> https://<span id="ex-host2">…</span>/ready
+<span class="c-dim">// → {"status":"ready","db":true,"poolLoaded":true,"healthyCount":…}</span></pre>
+    </div>
+
+    <div class="endpoint">
+      <div class="head"><span class="method get">GET</span><span class="path">/stats</span><span class="desc">full live metrics</span></div>
+      <pre><span class="c-blu">curl</span> https://<span id="ex-host3">…</span>/stats
+<span class="c-dim">// → total, byStatus, topProxies, medianLatencyMs, gateway, sources, …</span></pre>
+    </div>
+
+    <div class="endpoint">
+      <div class="head"><span class="method get">GET</span><span class="path">/api-meta</span><span class="desc">public connection metadata</span></div>
+      <pre><span class="c-blu">curl</span> https://<span id="ex-host4">…</span>/api-meta
+<span class="c-dim">// → gateway{host,port,authRequired,username,passwordConfigured}, api, admin</span></pre>
+    </div>
+
+    <div class="endpoint">
+      <div class="head"><span class="method get">GET</span><span class="path">/api/proxies</span><span class="desc">list proxies (admin)</span></div>
+      <pre><span class="c-blu">curl</span> -H <span class="c-org">"Authorization: Bearer &lt;YOUR_ADMIN_TOKEN&gt;"</span> \
+  https://<span id="ex-host5">…</span>/api/proxies?status=healthy&amp;limit=50
+<span class="c-dim">// → {count, proxies:[{host,port,protocol,score,latency_ms,…}]}</span></pre>
+    </div>
+
+    <div class="endpoint">
+      <div class="head"><span class="method get">GET</span><span class="path">/api/proxies/active</span><span class="desc">current rotation pool (admin)</span></div>
+      <pre><span class="c-blu">curl</span> -H <span class="c-org">"Authorization: Bearer &lt;YOUR_ADMIN_TOKEN&gt;"</span> https://<span id="ex-host6">…</span>/api/proxies/active</pre>
+    </div>
+
+    <div class="endpoint">
+      <div class="head"><span class="method get">GET</span><span class="path">/api/sources</span><span class="desc">list proxy-list sources (admin)</span></div>
+      <pre><span class="c-blu">curl</span> -H <span class="c-org">"Authorization: Bearer &lt;YOUR_ADMIN_TOKEN&gt;"</span> https://<span id="ex-host7">…</span>/api/sources</pre>
+    </div>
+
+    <div class="endpoint">
+      <div class="head"><span class="method post">POST</span><span class="path">/api/refresh</span><span class="desc">trigger discovery now (admin)</span></div>
+      <pre><span class="c-blu">curl</span> -X POST -H <span class="c-org">"Authorization: Bearer &lt;YOUR_ADMIN_TOKEN&gt;"</span> \
+  https://<span id="ex-host8">…</span>/api/refresh
+<span class="c-dim">// → {ok, failed, results:[{name,ok,candidates,unique,durationMs}]}</span></pre>
+    </div>
+
+    <div class="endpoint">
+      <div class="head"><span class="method post">POST</span><span class="path">/api/check</span><span class="desc">run validation passes now (admin)</span></div>
+      <pre><span class="c-blu">curl</span> -X POST -H <span class="c-org">"Authorization: Bearer &lt;YOUR_ADMIN_TOKEN&gt;"</span> \
+  https://<span id="ex-host9">…</span>/api/check
+<span class="c-dim">// → {validation:{checked,ok}, recheck:{…}, retest:{…}}</span></pre>
+    </div>
   </section>
 
-  <section>
-    <h2>Top Healthy Proxies</h2>
-    <table id="proxies"><thead><tr><th>Host</th><th>Port</th><th>Proto</th><th>Score</th><th>Latency</th><th>Success Rate</th><th>Exit IP</th></tr></thead><tbody></tbody></table>
+  <!-- HOW IT WORKS -->
+  <section id="how-it-works">
+    <h3>How it works</h3>
+    <p class="lede">A self-contained lifecycle: discover → validate → score → rotate → retire.</p>
+    <div class="feature-list">
+      <div class="feature"><div class="ic">🔎</div><h5>Discover</h5><p>28 GitHub proxy-list sources fetched on an hourly schedule, with a per-source cap so huge lists can't flood the pool.</p></div>
+      <div class="feature"><div class="ic">✅</div><h5>Validate</h5><p>Every candidate is tested with a real HTTPS request (CONNECT tunneling / SOCKS handshake), not just a TCP ping.</p></div>
+      <div class="feature"><div class="ic">📊</div><h5>Score</h5><p>0–100 reliability score from success rate, latency, freshness and stability. Slow proxies (&gt;2.5s) are excluded from rotation.</p></div>
+      <div class="feature"><div class="ic">🔄</div><h5>Rotate</h5><p>Weighted-random selection favors fresh, fast, proven proxies while keeping exit diversity. Failed upstreams are retried and cooled down.</p></div>
+      <div class="feature"><div class="ic">♻️</div><h5>Self-maintain</h5><p>Healthy → degraded → quarantined → retest → healthy/dead. Stale rows are cleaned up automatically.</p></div>
+      <div class="feature"><div class="ic">🔐</div><h5>Secure gateway</h5><p>Fail-closed basic auth on every request. Private/reserved IPs are blocked. Credentials are never forwarded upstream.</p></div>
+    </div>
   </section>
 
-  <section>
-    <h2>Recent Failures</h2>
-    <table id="failures"><thead><tr><th>Time</th><th>Proxy</th><th>Error</th></tr></thead><tbody></tbody></table>
+  <!-- LIVE DASHBOARD -->
+  <section id="live-dashboard">
+    <h3>Live Dashboard</h3>
+    <p class="lede">Real-time pool and gateway telemetry. <span class="muted" id="dash-refresh">refreshing…</span></p>
+
+    <div class="grid2">
+      <div class="panel">
+        <h4>Protocol Breakdown</h4>
+        <div id="protocols" class="muted">-</div>
+      </div>
+      <div class="panel">
+        <h4>Gateway Reliability</h4>
+        <table>
+          <tbody>
+            <tr><td class="muted">Origin first byte</td><td id="gr-rate">-</td></tr>
+            <tr><td class="muted">First-attempt success</td><td id="gr-first">-</td></tr>
+            <tr><td class="muted">Retry-recovered</td><td id="gr-retry">-</td></tr>
+            <tr><td class="muted">Tunnels / Early closes / Timeouts</td><td id="gr-counts">-</td></tr>
+            <tr><td class="muted">Latency P50 / P90 / P95</td><td id="gr-lat">-</td></tr>
+            <tr><td class="muted">Hot pool / Exploit / Explore</td><td id="gr-exp">-</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:20px">
+      <h4>Sources</h4>
+      <table id="sources"><thead><tr><th>Name</th><th>Kind</th><th>Candidates</th><th>Working</th><th>Rate</th><th>Prod Suc</th><th>Last Fetched</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="panel" style="margin-top:20px">
+      <h4>Top Healthy Proxies</h4>
+      <table id="proxies"><thead><tr><th>Host</th><th>Port</th><th>Proto</th><th>Score</th><th>Latency</th><th>Success Rate</th><th>Exit IP</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="panel" style="margin-top:20px">
+      <h4>Recent Failures</h4>
+      <table id="failures"><thead><tr><th>Time</th><th>Proxy</th><th>Error</th></tr></thead><tbody></tbody></table>
+    </div>
   </section>
 </main>
+
+<footer>
+  rotating-proxypool · self-maintaining rotating proxy gateway · <span id="footer-time">-</span>
+</footer>
 
 <script>
 const fmt = (n) => n == null ? "-" : Number(n).toLocaleString();
 const fmtTime = (iso) => iso ? new Date(iso).toLocaleString() : "-";
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pct = (v) => v == null ? "-" : (v * 100).toFixed(1) + "%";
+const fmtMs = (v) => v == null ? "-" : v + "ms";
+
+let meta = null;
+let hostname = location.host;
+
+async function loadMeta() {
+  try {
+    meta = await fetch("/api-meta").then(r => r.json());
+  } catch { meta = null; }
+  if (!meta) return;
+  hostname = meta.api && meta.api.baseUrl ? new URL(meta.api.baseUrl).host : location.host;
+  const gw = meta.gateway || {};
+  const host = gw.host || "your-proxy-host";
+  const port = gw.port || 8081;
+  const user = gw.username || "YOUR_USERNAME";
+  document.getElementById("meta-proxy").textContent = `${host}:${port}`;
+  document.getElementById("meta-auth").textContent = gw.authRequired ? "yes (basic)" : "no";
+  document.getElementById("meta-user").textContent = user;
+
+  const proxyUrl = `${host}:${port}`;
+  const cred = gw.authRequired ? `${user}:YOUR_PASSWORD@` : "";
+  document.getElementById("ex-curl").textContent =
+`curl -x http://${cred}${proxyUrl} https://api.ipify.org?format=json
+# {"ip":"<your rotating exit IP>"}`;
+  document.getElementById("ex-py").textContent =
+`import requests
+proxies = {
+  "http":  "http://${cred}${proxyUrl}",
+  "https": "http://${cred}${proxyUrl}",
+}
+r = requests.get("https://api.ipify.org?format=json", proxies=proxies, timeout=30)
+print(r.json())   # {"ip": "<your rotating exit IP>"}`;
+  document.getElementById("ex-node").textContent =
+`const { HttpsProxyAgent } = require("https-proxy-agent");
+const agent = new HttpsProxyAgent("http://${cred}${proxyUrl}");
+const req = https.request("https://api.ipify.org", { agent }, (res) => {
+  let b = ""; res.on("data", c => b += c); res.on("end", () => console.log(b));
+});
+req.end();`;
+
+  for (const id of ["ex-host","ex-host2","ex-host3","ex-host4","ex-host5","ex-host6","ex-host7","ex-host8","ex-host9"]) {
+    document.getElementById(id).textContent = hostname;
+  }
+}
 
 async function refresh() {
   try {
@@ -120,52 +395,39 @@ async function refresh() {
       fetch("/ready").then(r => r.json()).catch(() => ({status: "down"})),
     ]);
     const s = stats;
-    document.getElementById("subtitle").textContent = "last refresh " + fmtTime(s.lastRefresh);
+    document.getElementById("footer-time").textContent = "last refresh " + fmtTime(s.lastRefresh);
+    document.getElementById("dash-refresh").textContent = "last refresh " + fmtTime(s.lastRefresh);
     document.getElementById("c-total").textContent = fmt(s.total);
     document.getElementById("c-active").textContent = fmt(s.activePool);
     document.getElementById("c-healthy").textContent = fmt(s.byStatus.healthy);
     document.getElementById("c-degraded").textContent = fmt(s.byStatus.degraded);
-    document.getElementById("c-quarantined").textContent = fmt(s.byStatus.quarantined);
     document.getElementById("c-latency").textContent = s.medianLatencyMs == null ? "-" : s.medianLatencyMs + " ms";
     document.getElementById("c-rate").textContent = (s.validationSuccessRate * 100).toFixed(1) + "%";
+    const gr = s.gatewayReliability || {};
+    document.getElementById("c-gateway-ok").textContent = pct(gr.originFirstByteSuccessRate);
 
     const g = s.gateway;
-    document.getElementById("gateway-status").textContent =
-      `gateway: ${fmt(g.connectRequests)} CONNECT / ${fmt(g.httpRequests)} HTTP, ` +
-      `${fmt(g.authFailures)} auth fails, ${fmt(g.upstreamFailures)} upstream fails, ` +
-      `${fmt(g.success)} ok, ${fmt(g.retries)} retries, ${fmt(g.timeouts || 0)} timeouts`;
-
-    const gr = s.gatewayReliability || {};
-    const pctfmt = (v) => v == null ? "-" : (v * 100).toFixed(1) + "%";
-    const firstByteRate = gr.originFirstByteSuccessRate;
-    document.getElementById("gr-rate").textContent = pctfmt(firstByteRate);
-    const rateEl = document.getElementById("gr-rate");
-    rateEl.className = "value " + (firstByteRate >= 0.9 ? "good" : firstByteRate >= 0.7 ? "warn" : "bad");
-    document.getElementById("gr-tunnels").textContent = fmt(gr.tunnelEstablished);
-    document.getElementById("gr-early").textContent = fmt(gr.earlyClose);
-    document.getElementById("gr-first").textContent = pctfmt(gr.firstAttemptSuccessRate);
-    document.getElementById("gr-retry").textContent = pctfmt(gr.retryRecoveryRate);
-    const fmtMs = (v) => v == null ? "-" : v + "ms";
-    document.getElementById("gr-lat").textContent =
-      `${fmtMs(gr.p50Ms)} / ${fmtMs(gr.p90Ms)} / ${fmtMs(gr.p95Ms)}`;
-    document.getElementById("gr-timeouts").textContent = fmt(gr.timeouts);
-    const proto = Object.entries(gr.requestsByProtocol || {});
-    document.getElementById("gr-proto").textContent = proto.length
-      ? proto.map(([k, v]) => `${k}:${v}`).join(" ") : "-";
-
-    const sel = s.selection || {};
-    document.getElementById("gr-hot").textContent = fmt(sel.hotPoolSize);
-    const expl = sel.exploitSelections || 0, expc = sel.exploreSelections || 0;
-    document.getElementById("gr-exp").textContent =
-      `${fmt(expl)} / ${fmt(expc)}`;
-
     const dbUp = ready && ready.db;
+    document.getElementById("gateway-dot").className = "dot " + (g && g.success >= 0 ? "ok" : "bad");
+    document.getElementById("gateway-status").textContent =
+      `${fmt(g.connectRequests)} CONNECT / ${fmt(g.httpRequests)} HTTP · ${fmt(g.success)} ok`;
     document.getElementById("db-dot").className = "dot " + (dbUp ? "ok" : "bad");
     document.getElementById("db-status").textContent = dbUp ? "db: ok" : "db: down";
 
+    document.getElementById("gr-rate").textContent = pct(gr.originFirstByteSuccessRate);
+    document.getElementById("gr-first").textContent = pct(gr.firstAttemptSuccessRate);
+    document.getElementById("gr-retry").textContent = pct(gr.retryRecoveryRate);
+    document.getElementById("gr-counts").textContent =
+      `${fmt(gr.tunnelEstablished)} / ${fmt(gr.earlyClose)} / ${fmt(gr.timeouts)}`;
+    document.getElementById("gr-lat").textContent =
+      `${fmtMs(gr.p50Ms)} / ${fmtMs(gr.p90Ms)} / ${fmtMs(gr.p95Ms)}`;
+    const sel = s.selection || {};
+    document.getElementById("gr-exp").textContent =
+      `${fmt(sel.hotPoolSize)} / ${fmt(sel.exploitSelections)} / ${fmt(sel.exploreSelections)}`;
+
     const protos = Object.entries(s.byProtocol || {});
     document.getElementById("protocols").innerHTML = protos.length
-      ? protos.map(([k, v]) => `<span style="margin-right:14px">${esc(k)}: <b>${v}</b></span>`).join("")
+      ? protos.map(([k, v]) => `<div style="margin-bottom:4px"><code>${esc(k)}</code> <b>${v}</b></div>`).join("")
       : "no data";
 
     const gs = s.gatewaySources || {};
@@ -177,14 +439,12 @@ async function refresh() {
         : "n/a";
       return `<tr>
         <td>${esc(sr.name)}</td><td>${esc(sr.kind)}</td>
-        <td>${fmt(sr.fetch_count)}</td><td>${fmt(sr.candidates)}</td>
-        <td>${fmt(sr.working)}</td>
+        <td>${fmt(sr.unique_candidates)}</td><td>${fmt(sr.working)}</td>
         <td><div class="bar"><div style="width:${Math.round((sr.validation_rate||0)*100)}%"></div></div></td>
         <td>${prodSuc}</td>
         <td>${fmtTime(sr.last_fetched)}</td>
-        <td class="${sr.error_count ? "err" : ""}">${fmt(sr.error_count)}</td>
       </tr>`;
-    }).join("") || `<tr><td colspan="9" class="muted">no sources yet</td></tr>`;
+    }).join("") || `<tr><td colspan="7" class="muted">no sources yet</td></tr>`;
 
     const pxTbody = document.querySelector("#proxies tbody");
     pxTbody.innerHTML = (s.topProxies || []).map(p =>
@@ -201,10 +461,11 @@ async function refresh() {
       `<tr><td>${fmtTime(f.at)}</td><td>${esc(f.host)}:${f.port} (${esc(f.protocol)})</td><td class="err">${esc(f.error)}</td></tr>`
     ).join("") || `<tr><td colspan="3" class="muted">no recent failures</td></tr>`;
   } catch (e) {
-    document.getElementById("subtitle").textContent = "dashboard error: " + e;
+    document.getElementById("footer-time").textContent = "dashboard error: " + e;
   }
 }
 
+loadMeta();
 refresh();
 setInterval(refresh, 10000);
 </script>

@@ -28,6 +28,13 @@ const envSchema = z.object({
 
   ADMIN_TOKEN: z.string().default(""),
 
+  // Publicly visible connection metadata served by /api-meta for the docs site.
+  // Never contains credentials. When unset, the gateway's own bound host/port
+  // and username are reported instead.
+  PUBLIC_PROXY_HOST: z.string().default(""),
+  PUBLIC_PROXY_PORT: z.coerce.number().int().min(1).max(65535).default(0),
+  PUBLIC_API_URL: z.string().url().default(""),
+
   VALIDATION_TARGETS: z
     .string()
     .default("https://api.ipify.org,https://httpbin.org/ip"),

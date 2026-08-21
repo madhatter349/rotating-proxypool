@@ -102,6 +102,15 @@ export class GatewayServer {
   private readonly server: net.Server;
   private readonly sockets = new Set<net.Socket>();
   private closed = false;
+  /** Actual bound host (defaults to the listen host, e.g. "0.0.0.0"). */
+  get host(): string {
+    return this.opts.host ?? "0.0.0.0";
+  }
+  /** Actual bound port, captured at listen time. */
+  get port(): number {
+    return this._port;
+  }
+  private _port = 0;
 
   constructor(private readonly opts: GatewayOptions) {
     this.server = net.createServer((socket) => this.handleConnection(socket));
@@ -114,6 +123,7 @@ export class GatewayServer {
       this.server.listen(this.opts.port, this.opts.host ?? "0.0.0.0", () => {
         const addr = this.server.address();
         const port = typeof addr === "object" && addr ? addr.port : this.opts.port;
+        this._port = port;
         this.server.removeListener("error", reject);
         resolve(port);
       });

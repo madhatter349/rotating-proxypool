@@ -2,7 +2,7 @@ import Fastify from "fastify";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import type { AppConfig } from "../config.js";
-import { adminAuthConfigured } from "../config.js";
+import { adminAuthConfigured, gatewayAuthConfigured } from "../config.js";
 import type { Repository } from "../db/repository.js";
 import type { GatewayServer } from "../gateway/server.js";
 import type { PoolManager } from "../pool/manager.js";
@@ -52,6 +52,29 @@ export async function buildApi(state: AdminState): Promise<Fastify.FastifyInstan
 
   app.get("/stats", async () => buildStats(state));
 
+  // Public connection metadata for the docs site. No secrets: reports host/port,
+  // whether auth is configured, and the gateway username (never the password).
+  app.get("/api-meta", async () => ({
+    service: "rotating-proxypool",
+    version: "1.0.0",
+    gateway: {
+      host: state.cfg.env.PUBLIC_PROXY_HOST || state.gateway.host || "127.0.0.1",
+      port:
+        state.cfg.env.PUBLIC_PROXY_PORT > 0
+          ? state.cfg.env.PUBLIC_PROXY_PORT
+          : state.gateway.port,
+      authRequired: gatewayAuthConfigured(state.cfg),
+      username: state.cfg.env.GATEWAY_USERNAME,
+      passwordConfigured: state.cfg.env.GATEWAY_PASSWORD.length > 0,
+    },
+    api: {
+      baseUrl: state.cfg.env.PUBLIC_API_URL || "",
+    },
+    admin: {
+      configured: adminAuthConfigured(state.cfg),
+    },
+  }));
+
   const admin = async (req: Fastify.FastifyRequest, reply: Fastify.FastifyReply) => {
     if (!adminAuthConfigured(state.cfg)) {
       return reply.code(503).send({ error: "admin API not configured" });
@@ -63,7 +86,7 @@ export async function buildApi(state: AdminState): Promise<Fastify.FastifyInstan
   };
 
   app.addHook("preHandler", async (req, reply) => {
-    if (req.url.startsWith("/api/")) {
+    if (req.url.startsWith("/api/") && !req.url.startsWith("/api-meta")) {
       await admin(req, reply);
       if (reply.sent) return;
     }
