@@ -40,6 +40,10 @@ const envSchema = z.object({
     .default("https://api.ipify.org,https://httpbin.org/ip"),
   VALIDATION_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(40),
   VALIDATION_TIMEOUT_MS: z.coerce.number().int().min(500).default(8000),
+  // Per-source-IP request cap on the public /api/validate endpoint (per minute).
+  // Protects the open test endpoint from being DDoS'd while staying usable for
+  // manual curl tests and pool validation traffic.
+  VALIDATE_RATE_LIMIT_PER_MIN: z.coerce.number().int().min(1).default(120),
   CONNECT_TIMEOUT_MS: z.coerce.number().int().min(200).default(3000),
   GATEWAY_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5000).default(120000),
 

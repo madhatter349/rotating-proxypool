@@ -28,20 +28,22 @@ async function main(): Promise<void> {
   await sources.ensureSources();
   log(`ensured ${cfg.sources.length} configured sources`);
 
-  // Prepend a self-hosted, J.Crew-shaped validation target. It returns the same
-  // product_result JSON shape as the real J.Crew availability endpoint (minus
-  // the site-side Akamai geo/bot checks) plus a body marker, so the pool filters
-  // out proxies that MITM/TLS-intercept or serve wrong content without ever
-  // hammering www.jcrew.com. The marker syntax "url|marker" makes the validator
-  // require the marker string in the response body.
+  // Prepend a self-hosted open validation target. It returns the requester's
+  // source IP plus a body marker, so the pool filters out proxies that
+  // MITM/TLS-intercept or serve wrong content without relying on a third-party
+  // echo service. The marker syntax "url|marker" makes the validator require the
+  // marker string in the response body.
   const selfHostedTarget =
     (cfg.env.PUBLIC_API_URL || `http://localhost:${cfg.env.PORT}`) +
-    "/api/validate-target|rotating-proxypool-validate";
-  const validationTargets = [
-    selfHostedTarget,
-    ...cfg.validationTargets.filter((t) => !t.includes("/api/validate-target")),
-  ];
-  const validator = new Validator({ ...cfg, validationTargets });
+    "/api/validate|rotating-proxypool-validate";
+  const validator = new Validator({
+    env: cfg.env,
+    sources: cfg.sources,
+    validationTargets: [
+      selfHostedTarget,
+      ...cfg.validationTargets.filter((t) => !t.includes("/api/validate")),
+    ],
+  });
   const manager = new PoolManager(repo, validator, cfg);
   await manager.init();
   log(`loaded ${manager.getActivePool().length} healthy proxies from database`);

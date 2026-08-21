@@ -82,30 +82,38 @@ describe("api server", () => {
     assert.ok(!JSON.stringify(meta).includes("test-admin-token"));
   });
 
-  it("protects /api/* routes but not /api-meta or /api/validate-target", async () => {
+  it("protects /api/* routes but not /api-meta or /api/validate", async () => {
     app = await build();
     const denied = await app.inject({ method: "GET", url: "/api/proxies" });
     assert.equal(denied.statusCode, 401);
     const meta = await app.inject({ method: "GET", url: "/api-meta" });
     assert.equal(meta.statusCode, 200);
-    const vt = await app.inject({ method: "GET", url: "/api/validate-target" });
+    const vt = await app.inject({ method: "GET", url: "/api/validate" });
     assert.equal(vt.statusCode, 200);
   });
 
-  it("serves a J.Crew-shaped validation target with the body marker", async () => {
+  it("serves an open validation target that echoes the source IP and marker", async () => {
     app = await build();
-    const res = await app.inject({ method: "GET", url: "/api/validate-target" });
+    const res = await app.inject({ method: "GET", url: "/api/validate" });
     assert.equal(res.statusCode, 200);
     assert.match(res.headers["content-type"] ?? "", /application\/json/);
     const body = res.json();
-    assert.equal(body._type, "product_result");
-    assert.equal(body.count, 2);
-    assert.ok(Array.isArray(body.data));
-    assert.equal(body.data[0].brand, "J.Crew");
-    assert.equal(body.data[0].ean, "99108055280");
-    assert.ok(body.data[0].source_ip);
-    // The marker must be present so the validator can require it.
-    assert.equal(body.proxy_pool_validate_marker, "rotating-proxypool-validate");
+    assert.equal(body.marker, "rotating-proxypool-validate");
+    assert.equal(body.service, "rotating-proxypool");
+    assert.ok(body.ip);
     assert.match(res.body, /rotating-proxypool-validate/);
+  });
+
+  it("rate-limits /api/validate per source IP (429 after the cap)", async () => {
+    app = await build({ VALIDATE_RATE_LIMIT_PER_MIN: "3" });
+    const first = await app.inject({ method: "GET", url: "/api/validate" });
+    assert.equal(first.statusCode, 200);
+    const second = await app.inject({ method: "GET", url: "/api/validate" });
+    assert.equal(second.statusCode, 200);
+    const third = await app.inject({ method: "GET", url: "/api/validate" });
+    assert.equal(third.statusCode, 200);
+    const blocked = await app.inject({ method: "GET", url: "/api/validate" });
+    assert.equal(blocked.statusCode, 429);
+    assert.ok(Number(blocked.headers["retry-after"]) > 0);
   });
 });

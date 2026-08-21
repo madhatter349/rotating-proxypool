@@ -52,40 +52,44 @@ export async function buildApi(state: AdminState): Promise<Fastify.FastifyInstan
 
   app.get("/stats", async () => buildStats(state));
 
-  // Public self-hosted validation target. Returns J.Crew-shaped product_result
-  // JSON plus the requester's source IP, so the pool can validate proxies against
-  // a target that behaves like the real J.Crew endpoint WITHOUT pinging Akamai
-  // (which rate-limits/blocks datacenter IPs and is a site-side decision).
-  // A body marker ("rotating-proxypool-validate") lets the validator reject
-  // TLS-interception proxies that serve wrong content.
-  app.get("/api/validate-target", async (req, reply) => {
+  // Public open validation endpoint. Returns the requester's source IP plus a
+  // body marker so the pool can validate that a proxy tunnels clean HTTPS and
+  // does not MITM (a proxy that intercepts or serves blocked content will not
+  // echo this exact marker). Simple open format (like ipify/httpbin/ip) so it
+  // doubles as a manual test tool. Protected against DDoS by a per-source-IP
+  // rate limit.
+  const ipHits = new Map<string, number[]>();
+  const rateLimitPerMin = state.cfg.env.VALIDATE_RATE_LIMIT_PER_MIN;
+  app.get("/api/validate", async (req, reply) => {
     const ip = req.socket.remoteAddress ?? "0.0.0.0";
-    reply
+    // Sliding-window rate limit: allow `rateLimitPerMin` requests per IP per min.
+    const now = Date.now();
+    const windowStart = now - 60_000;
+    const hits = (ipHits.get(ip) ?? []).filter((t) => t > windowStart);
+    if (hits.length >= rateLimitPerMin) {
+      const retryAfter = Math.ceil((hits[0]! + 60_000 - now) / 1000);
+      return reply
+        .code(429)
+        .header("retry-after", String(Math.max(1, retryAfter)))
+        .send({ error: "rate limited", retryAfter });
+    }
+    hits.push(now);
+    ipHits.set(ip, hits);
+    // Prune stale buckets to bound memory.
+    if (ipHits.size > 10_000) {
+      for (const [k, v] of ipHits) {
+        if (!v.some((t) => t > windowStart)) ipHits.delete(k);
+      }
+    }
+    return reply
       .header("content-type", "application/json")
       .header("x-proxy-pool-validate", "rotating-proxypool-validate")
       .send({
-        _v: "24.1",
-        _type: "product_result",
-        count: 2,
-        proxy_pool_validate_marker: "rotating-proxypool-validate",
-        data: [
-          {
-            _type: "product",
-            brand: "J.Crew",
-            ean: "99108055280",
-            id: "99108055280",
-            name: "Broken-in T-shirt",
-            source_ip: ip,
-          },
-          {
-            _type: "product",
-            brand: "J.Crew",
-            ean: "99108055281",
-            id: "99108055281",
-            name: "Broken-in T-shirt (sample)",
-            source_ip: ip,
-          },
-        ],
+        ip,
+        origin: ip,
+        marker: "rotating-proxypool-validate",
+        service: "rotating-proxypool",
+        time: new Date().toISOString(),
       });
   });
 
@@ -126,7 +130,7 @@ export async function buildApi(state: AdminState): Promise<Fastify.FastifyInstan
     if (
       req.url.startsWith("/api/") &&
       !req.url.startsWith("/api-meta") &&
-      !req.url.startsWith("/api/validate-target")
+      !req.url.startsWith("/api/validate")
     ) {
       await admin(req, reply);
       if (reply.sent) return;
