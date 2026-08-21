@@ -474,7 +474,7 @@ describe("gateway", () => {
   it("abandons an upstream that accepts a tunnel but stalls, instead of hanging 30s", async () => {
     const bad = await startHttpProxy({ acceptThenSilent: true });
     teardown.push(() => bad.close());
-    const { gateway, port } = await buildGateway({
+    const { gateway, pool, port } = await buildGateway({
       proxies: [{ port: bad.port }],
       tunnelFirstByteTimeoutMs: 1200,
       tunnelIdleTimeoutMs: 1000,
@@ -491,6 +491,7 @@ describe("gateway", () => {
     const elapsed = Date.now() - started;
     assert.ok(elapsed < 6000, `should abandon the stall quickly, took ${elapsed}ms`);
     assert.ok(gateway.stats.timeouts >= 1, "should record a tunnel timeout");
+    assert.ok(pool.getCooldownMs(1) > Date.now(), "stalled upstream should be cooled down");
     socket.destroy();
   });
 

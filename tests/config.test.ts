@@ -7,6 +7,7 @@ describe("config", () => {
     const cfg = loadConfig({ DATABASE_URL: "postgres://x" });
     assert.equal(cfg.env.PORT, 8080);
     assert.equal(cfg.env.PROXY_PORT, 8081);
+    assert.equal(cfg.env.TUNNEL_IDLE_TIMEOUT_MS, 8000);
     assert.ok(cfg.validationTargets.length >= 2);
     assert.ok(cfg.sources.length >= 9);
     assert.equal(cfg.sources[0]?.kind, "http");

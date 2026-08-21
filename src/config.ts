@@ -43,8 +43,10 @@ const envSchema = z.object({
   TUNNEL_FIRST_BYTE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(12000),
   // TUNNEL_IDLE_TIMEOUT_MS bounds silence once a response is flowing; a
   // legitimate transfer always has ongoing bytes, so a connection silent this
-  // long is effectively dead.
-  TUNNEL_IDLE_TIMEOUT_MS: z.coerce.number().int().min(2000).default(30000),
+  // long is effectively dead. Must be well below typical client read timeouts
+  // (httpbin's is ~30s) so the gateway observes and penalizes the stall instead
+  // of racing the client and losing.
+  TUNNEL_IDLE_TIMEOUT_MS: z.coerce.number().int().min(2000).default(8000),
 
   // After a gateway attempt fails for a proxy, keep it out of rotation for this
   // long so a single flaky upstream cannot immediately be re-selected within a
