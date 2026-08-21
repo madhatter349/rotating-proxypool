@@ -210,6 +210,20 @@
           <pre id="ex-node">loading…</pre>
         </div>
       </div>
+      <div class="step">
+        <div class="num">4</div>
+        <div class="body">
+          <h4>Auto-rotate until valid (recommended)</h4>
+          <p>
+            Each request already exits through a <em>different</em> proxy. If a site
+            rejects one exit IP (403, 5xx) or a tunnel dies (SSL error), just retry —
+            the pool hands you a fresh IP each time. This loop retries until success:
+          </p>
+          <pre id="ex-retry">loading…</pre>
+          <p class="muted" style="margin-top:10px">Bash / curl equivalent:</p>
+          <pre id="ex-retry-curl">loading…</pre>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -382,6 +396,41 @@ const req = https.request("https://api.ipify.org", { agent }, (res) => {
   let b = ""; res.on("data", c => b += c); res.on("end", () => console.log(b));
 });
 req.end();`;
+
+  document.getElementById("ex-retry").textContent =
+`import requests
+import time
+
+TARGET = "https://example.com/your-endpoint"
+PROXY  = "http://${cred}${proxyUrl}"
+PROXIES = {"http": PROXY, "https": PROXY}
+MAX_TRIES = 6
+
+for attempt in range(1, MAX_TRIES + 1):
+    try:
+        r = requests.get(TARGET, proxies=PROXIES, timeout=30)
+        # A new exit IP was used for THIS request (rotation is per-request).
+        if r.status_code < 400:
+            print(f"attempt {attempt}: {r.status_code} OK")
+            break
+        print(f"attempt {attempt}: {r.status_code} - retrying through a fresh IP...")
+    except requests.exceptions.RequestException as e:
+        print(f"attempt {attempt}: error {e!r} - retrying through a fresh IP...")
+    time.sleep(0.5)
+else:
+    raise SystemExit("all attempts failed")`;
+
+  // curl one-liner that retries until it gets a non-403/5xx response.
+  document.getElementById("ex-retry-curl").textContent =
+`# bash: retry until a non-403/5xx status, rotating IPs each attempt
+for i in $(seq 1 6); do
+  code=$(curl -s -o /dev/null -w "%{http_code}" \
+    -x http://${cred}${proxyUrl} \
+    https://example.com/your-endpoint)
+  echo "attempt $i: $code"
+  [ "$code" -ge 200 ] && [ "$code" -lt 400 ] && break
+  sleep 0.5
+done`;
 
   for (const id of ["ex-host","ex-host2","ex-host3","ex-host4","ex-host5","ex-host6","ex-host7","ex-host8","ex-host9"]) {
     document.getElementById(id).textContent = hostname;

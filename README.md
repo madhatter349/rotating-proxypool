@@ -71,6 +71,34 @@ curl -x http://proxyuser:change-me-strong-password@127.0.0.1:8081 http://httpbin
 `Proxy-Authorization: Basic ...` is required on every request (fail-closed; 407
 otherwise). Credentials are never forwarded to upstream proxies.
 
+### Auto-rotate until valid
+
+Each request exits through a **different** proxy (per-request weighted rotation).
+The gateway already retries unreachable/stalled upstreams itself; for a site
+that rejects a given exit IP (403/5xx) or a tunnel that dies mid-handshake,
+simply retry the request client-side - every attempt uses a fresh IP:
+
+```python
+import requests, time
+PROXY  = "http://user:pass@altaria.proxy.rlwy.net:51121"
+PROXIES = {"http": PROXY, "https": PROXY}
+for attempt in range(1, 6):
+    try:
+        r = requests.get("https://example.com/endpoint", proxies=PROXIES, timeout=30)
+        if r.status_code < 400:
+            print("OK", r.status_code); break
+        print(f"attempt {attempt}: {r.status_code}, retrying...")
+    except requests.RequestException as e:
+        print(f"attempt {attempt}: {e!r}, retrying...")
+    time.sleep(0.5)
+else:
+    raise SystemExit("all attempts failed")
+```
+
+Why not rotate on the backend? HTTPS is tunneled end-to-end (opaque to the
+gateway), so the gateway cannot read a 403 from the origin without MITM-ing the
+client - which it deliberately does not do.
+
 ## Configuration
 
 All settings are environment variables (see `.env.example`). Notable ones:
