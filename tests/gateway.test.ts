@@ -123,6 +123,8 @@ describe("gateway", () => {
     assert.ok(res.body.includes("127.0.0.1"));
     assert.ok(gateway.stats.connectRequests >= 1);
     assert.equal(gateway.stats.authFailures, 0);
+    assert.equal(gateway.stats.tunnelEstablished, 1);
+    assert.equal(gateway.stats.success, 1);
   });
 
   it("forwards plain HTTP using absolute-URI form", async () => {
@@ -436,6 +438,9 @@ describe("gateway", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.ok(pool.getCooldownMs(1) > Date.now(), "early upstream close should arm cooldown");
     assert.ok(gateway.stats.upstreamFailures >= 1, "early close should count as upstream failure");
+    assert.equal(gateway.stats.tunnelEstablished, 1);
+    assert.equal(gateway.stats.success, 0, "pre-first-byte close is not an end-to-end success");
+    assert.equal(gateway.stats.earlyClose, 1);
   });
 
   it("temporarily cools down an upstream that just failed (excluded from rotation)", async () => {

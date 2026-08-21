@@ -158,4 +158,28 @@ describe("validator", () => {
       `concurrency exceeded: ${slow.maxConcurrent?.()}`
     );
   });
+
+  it("rotates validation targets instead of permanently pinning by proxy id", async () => {
+    const secondTarget = await startHttpsEchoTarget();
+    const p = await startHttpProxy();
+    teardown.push(() => secondTarget.close());
+    teardown.push(() => p.close());
+    const cfg = makeConfig({
+      VALIDATION_TARGETS: `${echoUrl},https://127.0.0.1:${secondTarget.port}/`,
+      VALIDATION_CONCURRENCY: "1",
+    });
+    const v = makeValidator(cfg);
+    const item = {
+      id: 1,
+      host: "127.0.0.1",
+      port: p.port,
+      protocol: "http" as const,
+      probe: false,
+    };
+    await v.validateBatch([item], () => undefined);
+    await v.validateBatch([item], () => undefined);
+    const targets = p.connectTargets?.() ?? [];
+    assert.equal(targets.length, 2);
+    assert.notEqual(targets[0], targets[1]);
+  });
 });

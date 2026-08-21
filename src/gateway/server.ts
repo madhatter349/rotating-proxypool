@@ -12,7 +12,11 @@ export interface GatewayStats {
   authFailures: number;
   upstreamFailures: number;
   retries: number;
+  /** Requests whose upstream tunnel was established before origin data arrived. */
+  tunnelEstablished: number;
   success: number;
+  /** Tunnels closed/abandoned before the first origin byte. */
+  earlyClose: number;
   startedAt: string;
   // Reliability metrics added for observability.
   totalClientRequests: number;
@@ -79,7 +83,9 @@ export class GatewayServer {
     authFailures: 0,
     upstreamFailures: 0,
     retries: 0,
+    tunnelEstablished: 0,
     success: 0,
+    earlyClose: 0,
     startedAt: new Date().toISOString(),
     totalClientRequests: 0,
     firstAttemptSuccess: 0,
@@ -259,18 +265,16 @@ export class GatewayServer {
         // (application traffic may already have reached the origin), so this is
         // the last attempt regardless. Apply tunnel timeouts to abandon stalls.
         socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        this.stats.tunnelEstablished++;
         this.pipe(
           socket,
           upstreamSocket,
           this.opts.tunnelFirstByteTimeoutMs,
           this.opts.tunnelIdleTimeoutMs,
-          upstream
+          upstream,
+          () => this.recordOriginSuccess(socket, started, i, upstream, latencyMs),
+          () => this.recordOriginBeforeFirstByteFailure(socket, started)
         );
-        this.stats.success++;
-        if (i === 0) this.stats.firstAttemptSuccess++;
-        else this.stats.retryRecovered++;
-        this.finishSuccess(socket, started);
-        void this.opts.pool.onGatewaySuccess(upstream.id, latencyMs);
         return;
       } catch (err) {
         // Pre-forward failure: safe to retry with a different upstream.
@@ -323,18 +327,16 @@ export class GatewayServer {
         upstreamSocket.write(forwarded.raw);
         if (head.leftover.length && !isSocks) upstreamSocket.write(head.leftover);
         // Bytes forwarded; retrying is unsafe. Apply tunnel timeouts to abandon stalls.
+        this.stats.tunnelEstablished++;
         this.pipe(
           socket,
           upstreamSocket,
           this.opts.tunnelFirstByteTimeoutMs,
           this.opts.tunnelIdleTimeoutMs,
-          upstream
+          upstream,
+          () => this.recordOriginSuccess(socket, started, i, upstream),
+          () => this.recordOriginBeforeFirstByteFailure(socket, started)
         );
-        this.stats.success++;
-        if (i === 0) this.stats.firstAttemptSuccess++;
-        else this.stats.retryRecovered++;
-        this.finishSuccess(socket, started);
-        void this.opts.pool.onGatewaySuccess(upstream.id);
         return;
       } catch (err) {
         if (upstreamSocket) upstreamSocket.destroy();
@@ -372,6 +374,34 @@ export class GatewayServer {
     this.stats.totalClientRequests++;
     this.stats.retryExhausted++;
     this.pushDuration(Date.now() - started);
+  }
+
+  private recordOriginSuccess(
+    socket: net.Socket,
+    started: number,
+    attempt: number,
+    upstream: ProxyRecord,
+    latencyMs?: number
+  ): void {
+    this.stats.success++;
+    if (attempt === 0) this.stats.firstAttemptSuccess++;
+    else this.stats.retryRecovered++;
+    this.finishSuccess(socket, started);
+    void this.opts.pool.onGatewaySuccess(upstream.id, latencyMs);
+  }
+
+  private recordOriginBeforeFirstByteFailure(
+    socket: net.Socket,
+    started: number
+  ): void {
+    this.stats.earlyClose++;
+    this.finishClientFailure(socket, started);
+  }
+
+  private finishClientFailure(socket: net.Socket, started: number): void {
+    this.stats.totalClientRequests++;
+    this.pushDuration(Date.now() - started);
+    socket.destroy();
   }
 
   private pushDuration(ms: number): void {
@@ -446,12 +476,20 @@ export class GatewayServer {
     upstream: net.Socket,
     firstByteTimeoutMs: number,
     idleTimeoutMs: number,
-    upstreamRecord: ProxyRecord
+    upstreamRecord: ProxyRecord,
+    onFirstByte: () => void,
+    onBeforeFirstByteClose: () => void
   ): void {
     client.pipe(upstream);
     upstream.pipe(client);
     let cleaned = false;
     let gotFirstByte = false;
+    let outcomeRecorded = false;
+    const recordBeforeFirstByteClose = () => {
+      if (outcomeRecorded || gotFirstByte) return;
+      outcomeRecorded = true;
+      onBeforeFirstByteClose();
+    };
     const teardown = (reason?: string, timedOut = false) => {
       if (cleaned) return;
       cleaned = true;
@@ -467,6 +505,7 @@ export class GatewayServer {
           `tunnel stalled: ${reason}`
         );
       }
+      recordBeforeFirstByteClose();
     };
     // Abandon an upstream that accepts a tunnel but never delivers origin bytes,
     // or that goes completely silent mid-stream. Node resets this inactivity
@@ -484,7 +523,9 @@ export class GatewayServer {
     upstream.on("data", () => {
       if (!gotFirstByte) {
         gotFirstByte = true;
+        outcomeRecorded = true;
         upstream.setTimeout(idleTimeoutMs, onStall);
+        onFirstByte();
       }
     });
     upstream.on("close", () => {

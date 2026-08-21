@@ -9,6 +9,7 @@ export interface MockServer {
   close: () => Promise<void>;
   connectionCount: () => number;
   maxConcurrent?: () => number;
+  connectTargets?: () => string[];
 }
 
 function listen(server: net.Server | http.Server): Promise<number> {
@@ -61,6 +62,7 @@ export async function startHttpProxy(
   let concurrent = 0;
   let maxConcurrent = 0;
   const sockets = new Set<net.Socket>();
+  const connectTargets: string[] = [];
   const server = net.createServer((client) => {
     count++;
     concurrent++;
@@ -82,6 +84,7 @@ export async function startHttpProxy(
       const parts = (lines[0] ?? "").split(" ");
       const method = parts[0] ?? "";
       const target = parts[1] ?? "";
+      if (method === "CONNECT") connectTargets.push(target);
       client.removeListener("data", onData);
 
       if (opts.garbage) {
@@ -181,6 +184,7 @@ export async function startHttpProxy(
     close: () => new Promise<void>((resolve) => { server.close(() => resolve()); }),
     connectionCount: () => count,
     maxConcurrent: () => maxConcurrent,
+    connectTargets: () => [...connectTargets],
   };
 }
 

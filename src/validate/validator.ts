@@ -44,6 +44,7 @@ function parseTargets(targets: string[]): Target[] {
 
 export class Validator {
   private readonly targets: Target[];
+  private targetCursor = 0;
   private readonly concurrency: number;
   private readonly connectTimeoutMs: number;
   private readonly validationTimeoutMs: number;
@@ -202,7 +203,9 @@ export class Validator {
         const proxy = queue.shift();
         if (!proxy) return;
         try {
-          const target = this.targets[(proxy.id % Math.max(1, this.targets.length))];
+          const target = this.targets.length
+            ? this.targets[this.targetCursor++ % this.targets.length]
+            : undefined;
           const result = await this.validateProxy(proxy, target);
           await onResult(proxy.id, result);
         } catch (err) {

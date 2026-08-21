@@ -203,10 +203,15 @@ function gatewayReliability(gateway: GatewayServer): object {
   const g = gateway.stats;
   const d = g.requestDurations;
   const totalRequests = g.totalClientRequests;
-  const successes = g.firstAttemptSuccess + g.retryRecovered;
+  const successes = g.success;
   return {
     totalRequests,
     clientSuccessRate: totalRequests ? +(successes / totalRequests).toFixed(4) : null,
+    tunnelEstablished: g.tunnelEstablished,
+    tunnelSuccessRate: g.tunnelEstablished
+      ? +(successes / g.tunnelEstablished).toFixed(4)
+      : null,
+    earlyClose: g.earlyClose,
     firstAttemptSuccessRate: totalRequests
       ? +(g.firstAttemptSuccess / totalRequests).toFixed(4)
       : null,
