@@ -165,7 +165,7 @@ export class PoolManager {
       const ev = this.gatewayEvidence.get(p.id) ?? EMPTY_EVIDENCE;
       const src = this.sourceStats.get(p.source);
       return explore
-        ? exploreWeight(p.score, p.latency_ms, latencyWeight, params)
+        ? exploreWeight(p.score, p.latency_ms, latencyWeight, params, ev)
         : exploitWeight(p.score, ev, src, p.latency_ms, latencyWeight, params, now);
     };
     const selected = selectWeighted(usable, this.rotationCtx, {

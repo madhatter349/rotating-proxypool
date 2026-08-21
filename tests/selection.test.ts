@@ -149,6 +149,31 @@ describe("selection integration (manager)", () => {
     assert.ok((counts.get(2) ?? 0) > 0, `diversity required: ${[...counts]}`);
   });
 
+  it("strongly prefers a proven proxy over an equally-scored unproven one", async () => {
+    const repo = new FakeRepository();
+    // Both proxies look identical from validation: same score, same latency.
+    await repo.insert(healthyRecord(1, "127.0.0.1", 1001, "http"));
+    await repo.insert(healthyRecord(2, "127.0.0.1", 1002, "http"));
+    const cfg = makeConfig({ GATEWAY_EXPLORATION_FRACTION: "0" });
+    const pool = new PoolManager(repo, new Validator(cfg), cfg);
+    await pool.init();
+    // Proxy 1 has been proven by real gateway traffic; proxy 2 has not.
+    await pool.onGatewaySuccess(1, 150);
+    await pool.onGatewaySuccess(1, 160);
+
+    const counts = new Map<number, number>();
+    for (let i = 0; i < 200; i++) {
+      const p = pool.selectUpstream(undefined, NOW + i);
+      counts.set(p!.id, (counts.get(p!.id) ?? 0) + 1);
+    }
+    const proven = counts.get(1) ?? 0;
+    const unproven = counts.get(2) ?? 0;
+    assert.ok(
+      proven > unproven * 3,
+      `proven proxy should dominate (proven=${proven} unproven=${unproven})`
+    );
+  });
+
   it("keeps per-proxy latency evidence isolated (no shared-array leak)", async () => {
     const repo = new FakeRepository();
     await repo.insert(healthyRecord(1, "127.0.0.1", 1001, "http"));

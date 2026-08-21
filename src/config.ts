@@ -32,8 +32,8 @@ const envSchema = z.object({
     .string()
     .default("https://api.ipify.org,https://httpbin.org/ip"),
   VALIDATION_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(40),
-  VALIDATION_TIMEOUT_MS: z.coerce.number().int().min(500).default(10000),
-  CONNECT_TIMEOUT_MS: z.coerce.number().int().min(200).default(5000),
+  VALIDATION_TIMEOUT_MS: z.coerce.number().int().min(500).default(8000),
+  CONNECT_TIMEOUT_MS: z.coerce.number().int().min(200).default(3000),
   GATEWAY_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5000).default(120000),
 
   // Gateway per-stage timeout budgets (ms).
@@ -41,7 +41,7 @@ const envSchema = z.object({
   // established for the first byte from the origin before abandoning it (the
   // "proxy accepted CONNECT then stopped forwarding" stall). No response bytes
   // have been delivered yet, so tearing down is safe and lets the client retry.
-  TUNNEL_FIRST_BYTE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(12000),
+  TUNNEL_FIRST_BYTE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(8000),
   // TUNNEL_IDLE_TIMEOUT_MS bounds silence once a response is flowing; a
   // legitimate transfer always has ongoing bytes, so a connection silent this
   // long is effectively dead. Must be well below typical client read timeouts
@@ -57,7 +57,7 @@ const envSchema = z.object({
   // Selection quality (production evidence) tuning.
   // A proxy whose last real gateway success is within this window is "hot" and
   // strongly preferred. Evidence ages beyond this and decays toward the floor.
-  HOT_SUCCESS_WINDOW_MS: z.coerce.number().int().min(1000).default(900000),
+  HOT_SUCCESS_WINDOW_MS: z.coerce.number().int().min(1000).default(600000),
   // Full decay horizon for past production success (ms). # After this a proxy
   // with no fresh gateway evidence is treated like a freshly-validated proxy.
   PROD_QUALITY_DECAY_MS: z.coerce.number().int().min(60000).default(1800000),
@@ -67,7 +67,7 @@ const envSchema = z.object({
   // Fraction of gateway selections that explore the wider healthy pool (rather
   // than exploit the hot/shortlist). Keeps newly-good proxies discoverable and
   // preserves exit diversity.
-  GATEWAY_EXPLORATION_FRACTION: z.coerce.number().min(0).max(1).default(0.2),
+  GATEWAY_EXPLORATION_FRACTION: z.coerce.number().min(0).max(1).default(0.1),
   // Minimum gateway attempts on a source before its production success rate may
   // influence selection (avoids dominating from a tiny sample).
   SOURCE_CONFIDENCE_MIN: z.coerce.number().int().min(1).default(8),

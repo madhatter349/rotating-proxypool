@@ -95,7 +95,11 @@ export function qualityMultiplier(
   const fresh = freshnessFactor(ev, p, now);
   const fail = failureFactor(ev, p);
   const hist = historyFactor(ev);
-  return clamp(fresh * fail * hist, 0.25, 1);
+  // A proxy with no real gateway traffic yet is unproven: keep it triable but
+  // far down the selection order so user traffic overwhelmingly flows through
+  // proxies already proven by live traffic.
+  const proven = ev.successCount > 0 ? 1 : 0.12;
+  return clamp(fresh * fail * hist * proven, 0.1, 1);
 }
 
 /**
@@ -149,9 +153,12 @@ export function exploreWeight(
   proxyScore: number,
   latencyMs: number | null | undefined,
   latencyFactor: (latencyMs: number) => number,
-  p: SelectionParams
+  p: SelectionParams,
+  evidence?: GatewayEvidence
 ): number {
   const scoreNorm = clamp(proxyScore / 100, 0.2, 1);
   const lat = latencyFactor(latencyMs ?? p.medianLatencyFallbackMs);
-  return Math.max(0.001, scoreNorm * lat);
+  // Even when exploring, prefer proxies with at least one real gateway success.
+  const proven = evidence && evidence.successCount > 0 ? 1 : 0.15;
+  return Math.max(0.001, scoreNorm * lat * proven);
 }
