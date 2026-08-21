@@ -57,6 +57,9 @@ const envSchema = z.object({
   // it. Keeps user traffic off stale-healthy rows that validated long ago but
   // have since gone silent; a scheduled recheck that succeeds refreshes it.
   GATEWAY_MAX_LAST_SUCCESS_AGE_MS: z.coerce.number().int().min(30000).default(900000),
+  // Proxies whose measured latency exceeds this (ms) are excluded from gateway
+  // rotation. Keeps slow/unstable upstreams out of the client path.
+  GATEWAY_MAX_LATENCY_MS: z.coerce.number().int().min(500).default(5000),
 
   // Selection quality (production evidence) tuning.
   // A proxy whose last real gateway success is within this window is "hot" and
@@ -76,7 +79,7 @@ const envSchema = z.object({
   // influence selection (avoids dominating from a tiny sample).
   SOURCE_CONFIDENCE_MIN: z.coerce.number().int().min(1).default(8),
 
-  DISCOVERY_INTERVAL_MS: z.coerce.number().int().min(5000).default(300000),
+  DISCOVERY_INTERVAL_MS: z.coerce.number().int().min(5000).default(3600000),
   VALIDATE_NEW_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),
   RECHECK_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),
   QUARANTINE_RETEST_INTERVAL_MS: z.coerce.number().int().min(5000).default(120000),
@@ -109,6 +112,26 @@ const DEFAULT_SOURCES: SourceConfig[] = [
   { name: "vpslab-http", url: "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/http_all.txt", kind: "http", enabled: true },
   { name: "vpslab-socks4", url: "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/socks4_all.txt", kind: "socks4", enabled: true },
   { name: "vpslab-socks5", url: "https://raw.githubusercontent.com/VPSLabCloud/VPSLab-Free-Proxy-List/main/socks5_all.txt", kind: "socks5", enabled: true },
+  // Additional verified GitHub proxy-list sources (checked 2026-08-21).
+  { name: "monosans-http", url: "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", kind: "http", enabled: true },
+  { name: "monosans-socks4", url: "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks4.txt", kind: "socks4", enabled: true },
+  { name: "monosans-socks5", url: "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/socks5.txt", kind: "socks5", enabled: true },
+  { name: "speedx-http", url: "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt", kind: "http", enabled: true },
+  { name: "speedx-socks4", url: "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks4.txt", kind: "socks4", enabled: true },
+  { name: "speedx-socks5", url: "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/socks5.txt", kind: "socks5", enabled: true },
+  { name: "clarketm-http", url: "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt", kind: "http", enabled: true },
+  { name: "shiftytr-http", url: "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/http.txt", kind: "http", enabled: true },
+  { name: "proxy4parsing-http", url: "https://raw.githubusercontent.com/proxy4parsing/proxy-list/main/http.txt", kind: "http", enabled: true },
+  { name: "ercindedeoglu-http", url: "https://raw.githubusercontent.com/ErcinDedeoglu/proxies/main/proxies/http.txt", kind: "http", enabled: true },
+  { name: "roosterkid-https", url: "https://raw.githubusercontent.com/roosterkid/openproxylist/main/HTTPS_RAW.txt", kind: "https", enabled: true },
+  { name: "roosterkid-socks4", url: "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS4_RAW.txt", kind: "socks4", enabled: true },
+  { name: "roosterkid-socks5", url: "https://raw.githubusercontent.com/roosterkid/openproxylist/main/SOCKS5_RAW.txt", kind: "socks5", enabled: true },
+  { name: "vakhov-http", url: "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/http.txt", kind: "http", enabled: true },
+  { name: "vakhov-socks4", url: "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks4.txt", kind: "socks4", enabled: true },
+  { name: "vakhov-socks5", url: "https://raw.githubusercontent.com/vakhov/fresh-proxy-list/master/socks5.txt", kind: "socks5", enabled: true },
+  { name: "zevtyardt-http", url: "https://raw.githubusercontent.com/zevtyardt/proxy-list/main/http.txt", kind: "http", enabled: true },
+  { name: "aliilapro-http", url: "https://raw.githubusercontent.com/ALIILAPRO/proxy/main/http.txt", kind: "http", enabled: true },
+  { name: "sunny-proxies", url: "https://raw.githubusercontent.com/sunny9577/proxy-scraper/master/proxies.txt", kind: "auto", enabled: true },
 ];
 
 export interface AppConfig {

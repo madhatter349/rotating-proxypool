@@ -64,8 +64,11 @@ export function isUsableForGateway(proxy: {
   minHealthyScore: number;
   last_success: Date | null;
   last_checked: Date | null;
+  latency_ms: number | null;
   /** Max age of last_success (ms) before a proxy is considered too stale to use. */
   maxLastSuccessAgeMs?: number;
+  /** Proxies slower than this (ms) are excluded from gateway rotation. */
+  maxLatencyMs?: number;
 }): boolean {
   if (proxy.status === "quarantined") return false;
   if (proxy.status === "dead") return false;
@@ -78,6 +81,12 @@ export function isUsableForGateway(proxy: {
     const last = proxy.last_success ?? proxy.last_checked ?? null;
     if (last == null) return false;
     if (Date.now() - last.getTime() > proxy.maxLastSuccessAgeMs) return false;
+  }
+  // Keep slow proxies out of the client path. A proxy measured at >5s is
+  // almost certainly overloaded or far away; it can still be revalidated but
+  // should not carry live user traffic.
+  if (proxy.maxLatencyMs != null && proxy.latency_ms != null) {
+    if (proxy.latency_ms > proxy.maxLatencyMs) return false;
   }
   return true;
 }

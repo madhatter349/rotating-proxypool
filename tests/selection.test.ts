@@ -126,7 +126,7 @@ describe("selection integration (manager)", () => {
     await repo.insert(healthyRecord(1, "127.0.0.1", 1001, "http"));
     await repo.insert({
       ...healthyRecord(2, "127.0.0.1", 1002, "http"),
-      latency_ms: 6000,
+      latency_ms: 1500,
       score: 80,
     });
     const cfg = makeConfig({ GATEWAY_EXPLORATION_FRACTION: "0" });

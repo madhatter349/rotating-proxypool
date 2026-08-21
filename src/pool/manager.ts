@@ -154,7 +154,9 @@ export class PoolManager {
         minHealthyScore: this.cfg.env.MIN_HEALTHY_SCORE,
         last_success: p.last_success,
         last_checked: p.last_checked,
+        latency_ms: p.latency_ms,
         maxLastSuccessAgeMs: this.cfg.env.GATEWAY_MAX_LAST_SUCCESS_AGE_MS,
+        maxLatencyMs: this.cfg.env.GATEWAY_MAX_LATENCY_MS,
       })
     );
     if (usable.length === 0) return null;

@@ -9,8 +9,13 @@ describe("config", () => {
     assert.equal(cfg.env.PROXY_PORT, 8081);
     assert.equal(cfg.env.TUNNEL_IDLE_TIMEOUT_MS, 8000);
     assert.ok(cfg.validationTargets.length >= 2);
-    assert.ok(cfg.sources.length >= 9);
+    // Sources: 9 original + 19 added GitHub lists.
+    assert.ok(cfg.sources.length >= 25);
     assert.equal(cfg.sources[0]?.kind, "http");
+    // Discovery pipeline runs hourly by default.
+    assert.equal(cfg.env.DISCOVERY_INTERVAL_MS, 3_600_000);
+    // Slow proxies are excluded from gateway rotation by default.
+    assert.equal(cfg.env.GATEWAY_MAX_LATENCY_MS, 5000);
   });
 
   it("parses numeric env values", () => {

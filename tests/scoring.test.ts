@@ -79,6 +79,7 @@ describe("scoring unit", () => {
       minHealthyScore: 25,
       last_success: fresh,
       last_checked: fresh,
+      latency_ms: 200,
       ...over,
     });
     assert.equal(isUsableForGateway(mk({})), true);
@@ -95,6 +96,7 @@ describe("scoring unit", () => {
       minHealthyScore: 25,
       last_success: new Date(),
       last_checked: new Date(),
+      latency_ms: 200,
       maxLastSuccessAgeMs: 900_000,
       ...over,
     });
@@ -109,5 +111,23 @@ describe("scoring unit", () => {
     );
     // Never checked -> excluded.
     assert.equal(isUsableForGateway(mk({ last_success: null, last_checked: null })), false);
+  });
+
+  it("isUsableForGateway excludes proxies slower than the max latency", () => {
+    const mk = (over: Record<string, unknown>) => ({
+      status: "healthy",
+      quarantined_until: null,
+      score: 80,
+      minHealthyScore: 25,
+      last_success: new Date(),
+      last_checked: new Date(),
+      latency_ms: 200,
+      maxLatencyMs: 5000,
+      ...over,
+    });
+    assert.equal(isUsableForGateway(mk({})), true);
+    assert.equal(isUsableForGateway(mk({ latency_ms: 6000 })), false);
+    // Unknown latency is allowed through (no data to judge).
+    assert.equal(isUsableForGateway(mk({ latency_ms: null })), true);
   });
 });

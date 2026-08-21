@@ -80,15 +80,18 @@ export function selectWeighted(
 }
 
 /**
- * Latency-aware de-weighting (1 = fast, decays toward 0.55 for very slow
- * proxies). Kept mild so the pool stays diverse: a slow-but-working proxy is
- * still selectable, just less often than a fast one.
+ * Latency-aware weighting: steeper than before so fast proxies dominate while
+ * slow-but-working ones are heavily de-weighted. A proxy is not zeroed (so the
+ * pool still rotates), but a 2s proxy is ~5x less likely than a 200ms one and a
+ * 5s proxy is barely selected.
  */
 export function latencyWeight(latencyMs: number | null | undefined): number {
   const lat = latencyMs ?? 3000;
-  if (lat <= 500) return 1;
-  if (lat <= 1000) return 0.92;
-  if (lat <= 2000) return 0.82;
-  if (lat <= 5000) return 0.68;
-  return 0.55;
+  if (lat <= 250) return 1;
+  if (lat <= 500) return 0.9;
+  if (lat <= 1000) return 0.7;
+  if (lat <= 2000) return 0.5;
+  if (lat <= 3000) return 0.35;
+  if (lat <= 5000) return 0.2;
+  return 0.1;
 }
