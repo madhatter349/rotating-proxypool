@@ -421,6 +421,23 @@ describe("gateway", () => {
     socket.destroy();
   });
 
+  it("penalizes an upstream that closes before the first origin byte", async () => {
+    const bad = await startHttpProxy({ acceptThenClose: true });
+    teardown.push(() => bad.close());
+    const { gateway, port, pool } = await buildGateway({ proxies: [{ port: bad.port }] });
+    teardown.push(() => gateway.close());
+
+    const { socket, statusCode } = await withTimeout(
+      connectViaProxy("127.0.0.1", port, { host: "127.0.0.1", port: echo.port }, CREDS),
+      10000
+    );
+    assert.equal(statusCode, 200, "the client sees the CONNECT before the upstream closes");
+    await withTimeout(new Promise((resolve) => socket.once("close", resolve)), 5000);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(pool.getCooldownMs(1) > Date.now(), "early upstream close should arm cooldown");
+    assert.ok(gateway.stats.upstreamFailures >= 1, "early close should count as upstream failure");
+  });
+
   it("temporarily cools down an upstream that just failed (excluded from rotation)", async () => {
     const proxy = await startHttpProxy();
     teardown.push(() => proxy.close());

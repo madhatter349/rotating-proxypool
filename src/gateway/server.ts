@@ -452,7 +452,7 @@ export class GatewayServer {
     upstream.pipe(client);
     let cleaned = false;
     let gotFirstByte = false;
-    const teardown = (reason?: string) => {
+    const teardown = (reason?: string, timedOut = false) => {
       if (cleaned) return;
       cleaned = true;
       client.unpipe(upstream);
@@ -460,7 +460,8 @@ export class GatewayServer {
       client.destroy();
       upstream.destroy();
       if (reason) {
-        this.stats.timeouts++;
+        this.stats.upstreamFailures++;
+        if (timedOut) this.stats.timeouts++;
         void this.opts.pool.onGatewayFailure(
           upstreamRecord.id,
           `tunnel stalled: ${reason}`
@@ -477,7 +478,7 @@ export class GatewayServer {
       this.opts.log(
         `[gateway] abandoning upstream ${upstreamRecord.host}:${upstreamRecord.port} (${upstreamRecord.protocol}): ${reason}`
       );
-      teardown(reason);
+      teardown(reason, true);
     };
     upstream.setTimeout(firstByteTimeoutMs, onStall);
     upstream.on("data", () => {
@@ -486,8 +487,14 @@ export class GatewayServer {
         upstream.setTimeout(idleTimeoutMs, onStall);
       }
     });
-    upstream.on("close", () => teardown());
-    upstream.on("error", () => teardown());
+    upstream.on("close", () => {
+      if (!gotFirstByte) teardown("upstream closed before first origin byte");
+      else teardown();
+    });
+    upstream.on("error", (err) => {
+      if (!gotFirstByte) teardown(`upstream error: ${err.message}`);
+      else teardown();
+    });
     client.on("error", () => undefined);
     client.on("close", () => teardown());
   }

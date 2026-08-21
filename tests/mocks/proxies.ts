@@ -43,6 +43,8 @@ export interface HttpProxyMockOptions {
   silentConnect?: boolean;
   /** Reply "200 Connection established" to CONNECT but never forward bytes. */
   acceptThenSilent?: boolean;
+  /** Reply "200 Connection established" then close before origin bytes. */
+  acceptThenClose?: boolean;
   /** SOCKS: reject the greeting with "no acceptable methods" (handshake failure). */
   rejectHandshake?: boolean;
 }
@@ -111,6 +113,11 @@ export async function startHttpProxy(
           if (opts.acceptThenSilent) {
             // Confirm the tunnel but never relay bytes (first-byte stall).
             client.write("HTTP/1.1 200 Connection established\r\n\r\n");
+            return;
+          }
+          if (opts.acceptThenClose) {
+            client.write("HTTP/1.1 200 Connection established\r\n\r\n");
+            setTimeout(() => client.destroy(), 10);
             return;
           }
           const upstream = net.connect(Number(port), host, () => {
