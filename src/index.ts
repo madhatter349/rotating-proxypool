@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     password: cfg.env.GATEWAY_PASSWORD,
     pool: manager,
     connectTimeoutMs: cfg.env.CONNECT_TIMEOUT_MS,
-    requestTimeoutMs: 120_000,
+    requestTimeoutMs: cfg.env.GATEWAY_REQUEST_TIMEOUT_MS,
     tunnelFirstByteTimeoutMs: cfg.env.TUNNEL_FIRST_BYTE_TIMEOUT_MS,
     tunnelIdleTimeoutMs: cfg.env.TUNNEL_IDLE_TIMEOUT_MS,
     maxHeaderBytes: 16 * 1024,

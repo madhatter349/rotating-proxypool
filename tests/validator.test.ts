@@ -66,6 +66,19 @@ describe("validator", () => {
     assert.equal(result.protocol, "socks5");
   });
 
+  it("handles a SOCKS5 server that fragments its greeting reply", async () => {
+    const p = await startSocks5Proxy({ fragmentedGreeting: true });
+    teardown.push(() => p.close());
+    const cfg = makeConfig({ VALIDATION_TARGETS: echoUrl });
+    const v = makeValidator(cfg);
+    const result = await withTimeout(
+      v.validateProxy(proxy({ port: p.port, protocol: "socks5" })),
+      10000
+    );
+    assert.equal(result.ok, true, result.error ?? "");
+    assert.equal(result.protocol, "socks5");
+  });
+
   it("validates a SOCKS4 proxy", async () => {
     const p = await startSocks4Proxy();
     teardown.push(() => p.close());

@@ -238,16 +238,25 @@ export class Repository {
     return rows.map(rowToProxy);
   }
 
-  async getProxiesByStatus(statuses: ProxyStatus[]): Promise<ProxyRecord[]> {
+  async getProxiesByStatus(
+    statuses: ProxyStatus[],
+    limit = 2000
+  ): Promise<ProxyRecord[]> {
     const { rows } = await this.db.query<Record<string, unknown>>(
-      `SELECT ${PROXY_COLUMNS} FROM proxies WHERE status = ANY($1::text[])`,
-      [statuses]
+      `SELECT ${PROXY_COLUMNS} FROM proxies
+       WHERE status = ANY($1::text[])
+       ORDER BY last_checked ASC NULLS FIRST
+       LIMIT $2`,
+      [statuses, limit]
     );
     return rows.map(rowToProxy);
   }
 
-  async getPending(): Promise<ProxyRecord[]> {
-    return this.getProxiesByStatus(["pending", "discovered"]);
+  async getPending(limit?: number): Promise<ProxyRecord[]> {
+    return this.getProxiesByStatus(
+      ["pending", "discovered"],
+      limit ?? 5000
+    );
   }
 
   async getQuarantinedDue(): Promise<ProxyRecord[]> {

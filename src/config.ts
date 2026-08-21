@@ -34,6 +34,7 @@ const envSchema = z.object({
   VALIDATION_CONCURRENCY: z.coerce.number().int().min(1).max(200).default(40),
   VALIDATION_TIMEOUT_MS: z.coerce.number().int().min(500).default(10000),
   CONNECT_TIMEOUT_MS: z.coerce.number().int().min(200).default(5000),
+  GATEWAY_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(5000).default(120000),
 
   // Gateway per-stage timeout budgets (ms).
   // TUNNEL_FIRST_BYTE_TIMEOUT_MS bounds how long we wait after a tunnel is

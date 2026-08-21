@@ -61,6 +61,7 @@ export class PoolManager {
   private readonly exploreSelections = new Map<number, number>();
   readonly maxRecentFailures = 100;
   private static readonly MAX_EVIDENCE_LATENCIES = 10;
+  private static readonly MAX_EVIDENCE_ENTRIES = 5000;
 
   /** For tests: read the cooldown window for a proxy. */
   getCooldownMs(proxyId: number): number {
@@ -231,6 +232,10 @@ export class PoolManager {
     now: number,
     success: boolean
   ): void {
+    if (this.gatewayEvidence.size >= PoolManager.MAX_EVIDENCE_ENTRIES) {
+      const first = this.gatewayEvidence.keys().next().value as number | undefined;
+      if (first !== undefined) this.gatewayEvidence.delete(first);
+    }
     // Clone the array so the shared EMPTY_EVIDENCE constant is never mutated.
     const ev =
       this.gatewayEvidence.get(proxyId) ??

@@ -159,10 +159,14 @@ export function socks5Connect(
       finish(new ProxyHandshakeError(`socks5: ${err.message}`, "socks-handshake"))
     );
 
-    // Greeting
+    // Greeting (server reply is VER + METHOD; may arrive fragmented).
     socket.write(Buffer.from([0x05, 0x01, 0x00]));
-    socket.once("data", function onGreet(chunk: Buffer) {
-      const greet = chunk[0] === 0x05 && chunk[1] === 0x00;
+    let greetBuf = Buffer.alloc(0);
+    const onGreet = (chunk: Buffer) => {
+      greetBuf = Buffer.concat([greetBuf, chunk]);
+      if (greetBuf.length < 2) return;
+      socket.removeListener("data", onGreet);
+      const greet = greetBuf[0] === 0x05 && greetBuf[1] === 0x00;
       if (!greet) {
         return finish(
           new ProxyHandshakeError("socks5: greeting rejected", "socks-handshake")
@@ -222,7 +226,8 @@ export function socks5Connect(
         finish();
       };
       socket.on("data", onReply);
-    });
+    };
+    socket.on("data", onGreet);
   });
 }
 

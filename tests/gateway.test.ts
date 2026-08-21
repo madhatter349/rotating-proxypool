@@ -1,5 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import net from "node:net";
 import { GatewayServer } from "../src/gateway/server.js";
 import { PoolManager } from "../src/pool/manager.js";
 import { Validator } from "../src/validate/validator.js";
@@ -229,6 +230,25 @@ describe("gateway", () => {
       CREDS
     );
     assert.equal(res.statusCode, 403);
+  });
+
+  it("blocks CONNECT to private/reserved hostnames when blockPrivate is enabled", async () => {
+    const proxy = await startHttpProxy();
+    teardown.push(() => proxy.close());
+    const { gateway, port } = await buildGateway({
+      proxies: [{ port: proxy.port }],
+      blockPrivate: true,
+    });
+    teardown.push(() => gateway.close());
+
+    for (const target of [
+      { host: "localhost", port: echo.port },
+      { host: "metadata.internal", port: 80 },
+      { host: "router.local", port: 80 },
+    ]) {
+      const res = await connectViaProxy("127.0.0.1", port, target, CREDS);
+      assert.equal(res.statusCode, 403, `expected 403 for ${target.host}`);
+    }
   });
 
   it("rotates across multiple healthy upstreams", async () => {
@@ -528,6 +548,62 @@ describe("gateway", () => {
     await pool.onGatewayFailure(1, "connect ECONNREFUSED");
     assert.ok(pool.getCooldownMs(1) > Date.now(), "cooldown should be armed");
     assert.equal(pool.selectUpstream(), null, "failed proxy is excluded from rotation");
+  });
+
+  it("forwards client bytes that arrive in the same packet as CONNECT (pipelined TLS)", async () => {
+    const proxy = await startHttpProxy();
+    teardown.push(() => proxy.close());
+    const { gateway, port } = await buildGateway({ proxies: [{ port: proxy.port }] });
+    teardown.push(() => gateway.close());
+
+    // Send CONNECT and the TLS ClientHello (or here: a plain GET body) in one
+    // TCP write. The gateway must forward the leftover bytes to the upstream so
+    // nothing sent by the client is lost.
+    const result = await withTimeout(
+      new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+        const socket = net.connect(port, "127.0.0.1");
+        const timeout = setTimeout(() => {
+          socket.destroy();
+          reject(new Error("pipelined CONNECT: timeout"));
+        }, 15000);
+        let buf = Buffer.alloc(0);
+        socket.on("error", reject);
+        socket.on("data", (chunk) => {
+          buf = Buffer.concat([buf, chunk]);
+          const text = buf.toString("utf8");
+          const headerEnd = text.indexOf("\r\n\r\n");
+          if (headerEnd === -1) return;
+          const statusLine = text.slice(0, headerEnd).split("\r\n")[0] ?? "";
+          const code = Number(statusLine.split(" ")[1] ?? 0);
+          if (code !== 200) {
+            clearTimeout(timeout);
+            socket.destroy();
+            return resolve({ statusCode: code, body: "" });
+          }
+          // The tunnel is established. The origin's echo must contain the
+          // "/pipelined" path — proving the GET bytes that were sent in the
+          // same TCP write as CONNECT were actually forwarded to the upstream.
+          if (text.includes("/pipelined")) {
+            clearTimeout(timeout);
+            socket.destroy();
+            resolve({ statusCode: code, body: text.slice(headerEnd + 4) });
+          }
+        });
+        socket.on("connect", () => {
+          const auth = Buffer.from(`${CREDS.username}:${CREDS.password}`).toString("base64");
+          socket.write(
+            `CONNECT 127.0.0.1:${plainEcho.port} HTTP/1.1\r\n` +
+              `Host: 127.0.0.1:${plainEcho.port}\r\n` +
+              `Proxy-Authorization: Basic ${auth}\r\n\r\n` +
+              `GET /pipelined HTTP/1.1\r\nHost: 127.0.0.1:${plainEcho.port}\r\nConnection: close\r\n\r\n`
+          );
+        });
+      }),
+      20000
+    );
+    assert.equal(result.statusCode, 200);
+    assert.ok(result.body.includes("/pipelined"), "leftover bytes must be forwarded to the upstream");
+    assert.ok(gateway.stats.success >= 1);
   });
 
   it("shuts down gracefully", async () => {

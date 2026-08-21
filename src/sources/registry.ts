@@ -15,7 +15,7 @@ export interface SourceRepo {
     host: string,
     port: number,
     protocol: ProxyProtocol
-  ): Promise<unknown | null>;
+  ): Promise<{ id: number; status: string } | null>;
   upsertCandidate(candidate: ProxyCandidate): Promise<unknown>;
   recordSourceFetch(
     sourceId: number,
@@ -109,7 +109,10 @@ export class SourceRegistry {
         seen.add(key);
         unique++;
         const before = await this.repo.getByKey(cand.host, cand.port, protocol);
-        if (!before) {
+        // Insert new candidates AND resurrect 'dead' rows (upsertCandidate flips
+        // a dead row back to pending). Otherwise a proxy that died once could
+        // never re-enter the pool even after recovering.
+        if (!before || before.status === "dead") {
           await this.repo.upsertCandidate(cand);
           inserted++;
         }

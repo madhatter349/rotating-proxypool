@@ -48,6 +48,8 @@ export interface HttpProxyMockOptions {
   acceptThenClose?: boolean;
   /** SOCKS: reject the greeting with "no acceptable methods" (handshake failure). */
   rejectHandshake?: boolean;
+  /** SOCKS5: send the greeting reply byte-by-byte (tests fragmented-reply handling). */
+  fragmentedGreeting?: boolean;
 }
 
 /**
@@ -222,7 +224,12 @@ export async function startSocks5Proxy(
           client.write(Buffer.from([0x05, 0xff]));
           return;
         }
-        client.write(Buffer.from([0x05, 0x00]));
+        if (opts.fragmentedGreeting) {
+          client.write(Buffer.from([0x05]));
+          setImmediate(() => client.write(Buffer.from([0x00])));
+        } else {
+          client.write(Buffer.from([0x05, 0x00]));
+        }
         buf = buf.subarray(3);
         state = "request";
       }

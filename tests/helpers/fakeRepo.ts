@@ -144,6 +144,19 @@ export class FakeRepository {
     if (p) p.probe = false;
   }
 
+  async getByKey(
+    host: string,
+    port: number,
+    protocol: ProxyProtocol
+  ): Promise<{ id: number; status: string } | null> {
+    for (const p of this.proxies.values()) {
+      if (p.host === host && p.port === port && p.protocol === protocol) {
+        return { id: p.id, status: p.status };
+      }
+    }
+    return null;
+  }
+
   async upsertCandidate(candidate: ProxyCandidate): Promise<ProxyRecord> {
     const protocol = candidate.protocol === "auto" ? "http" : candidate.protocol;
     for (const p of this.proxies.values()) {
@@ -180,6 +193,65 @@ export class FakeRepository {
       last_error: null,
       probe: candidate.protocol === "auto",
     });
+  }
+
+  // ---- source methods (for SourceRegistry) ----
+  async ensureSource(
+    name: string,
+    url: string,
+    kind: string
+  ): Promise<SourceRecord> {
+    for (const src of this.sources.values()) {
+      if (src.name === name) {
+        src.url = url;
+        src.kind = kind;
+        return src;
+      }
+    }
+    const id = this.nextId++;
+    const record: SourceRecord = {
+      id,
+      name,
+      url,
+      kind,
+      enabled: true,
+      last_fetched: null,
+      last_success: null,
+      fetch_count: 0,
+      candidates: 0,
+      unique_candidates: 0,
+      working: 0,
+      validation_rate: 0,
+      error_count: 0,
+      last_error: null,
+      created_at: this.now,
+      updated_at: this.now,
+    };
+    this.sources.set(id, record);
+    return record;
+  }
+
+  async listSources(): Promise<SourceRecord[]> {
+    return [...this.sources.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  async recordSourceFetch(
+    sourceId: number,
+    stats: { candidates: number; unique: number; error?: string | null }
+  ): Promise<void> {
+    const src = this.sources.get(sourceId);
+    if (!src) return;
+    src.last_fetched = this.now;
+    src.fetch_count += 1;
+    src.candidates = stats.candidates;
+    src.unique_candidates = stats.unique;
+    if (stats.error != null) {
+      src.error_count += 1;
+      src.last_error = stats.error;
+    } else {
+      src.last_success = this.now;
+      src.last_error = null;
+    }
   }
 
   // ---- unused by manager but needed for structural parity ----

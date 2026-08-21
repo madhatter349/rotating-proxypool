@@ -61,17 +61,18 @@ interface RequestHead {
 }
 
 function privateBlocked(host: string): boolean {
-  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false;
-  const oct = host.split(".").map((o) => Number(o));
-  const a = oct[0] ?? 0;
-  const b = oct[1] ?? 0;
-  if (a === 10) return true;
-  if (a === 127) return true;
-  if (a === 0) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (/^(?:10\.|127\.|0\.|169\.254\.|192\.168\.|100\.(?:6[4-9]|7\d|12[0-7])\.)/.test(host)) {
+    return true;
+  }
+  const m = /^172\.(\d{1,3})\./.exec(host);
+  if (m) {
+    const b = Number(m[1]!);
+    if (b >= 16 && b <= 31) return true;
+  }
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    if (/^(localhost|.*\.local|.*\.internal|.*\.lan|.*\.localdomain)$/i.test(host)) return true;
+    return false;
+  }
   return false;
 }
 
@@ -268,6 +269,7 @@ export class GatewayServer {
         // (application traffic may already have reached the origin), so this is
         // the last attempt regardless. Apply tunnel timeouts to abandon stalls.
         socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
+        if (head.leftover.length) upstreamSocket.write(head.leftover);
         this.stats.tunnelEstablished++;
         this.pipe(
           socket,
@@ -283,7 +285,9 @@ export class GatewayServer {
         // Pre-forward failure: safe to retry with a different upstream.
         this.stats.upstreamFailures++;
         if (i < attempts - 1) this.stats.retries++;
-        void this.opts.pool.onGatewayFailure(upstream.id, (err as Error).message);
+        void this.opts.pool.onGatewayFailure(upstream.id, (err as Error).message).catch(
+          () => undefined
+        );
       }
     }
     // All attempts failed before forwarding — 502 is the correct answer.
@@ -347,7 +351,9 @@ export class GatewayServer {
         if (upstreamSocket) upstreamSocket.destroy();
         this.stats.upstreamFailures++;
         if (i < attempts - 1) this.stats.retries++;
-        void this.opts.pool.onGatewayFailure(upstream.id, (err as Error).message);
+        void this.opts.pool.onGatewayFailure(upstream.id, (err as Error).message).catch(
+          () => undefined
+        );
       }
     }
     this.finishFail(socket, started);
@@ -397,7 +403,9 @@ export class GatewayServer {
     // successful attempt reports here, so failed attempts are never rewarded.
     const latencyMs = Date.now() - attemptStartedMs;
     if (Number.isFinite(latencyMs) && latencyMs > 0) {
-      void this.opts.pool.onGatewaySuccess(upstream.id, latencyMs);
+      void this.opts.pool
+        .onGatewaySuccess(upstream.id, latencyMs)
+        .catch(() => undefined);
     }
   }
 
@@ -511,10 +519,9 @@ export class GatewayServer {
       if (reason) {
         this.stats.upstreamFailures++;
         if (timedOut) this.stats.timeouts++;
-        void this.opts.pool.onGatewayFailure(
-          upstreamRecord.id,
-          `tunnel stalled: ${reason}`
-        );
+        void this.opts.pool
+          .onGatewayFailure(upstreamRecord.id, `tunnel stalled: ${reason}`)
+          .catch(() => undefined);
       }
       recordBeforeFirstByteClose();
     };
