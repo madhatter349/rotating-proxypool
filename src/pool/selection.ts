@@ -33,10 +33,6 @@ export interface SelectionParams {
   confidenceMin: number;
   /** Latency (ms) assumed when no measurement exists. */
   medianLatencyFallbackMs: number;
-  /** Above this recent-median latency a proxy is de-weighted (mild). */
-  slowMedianLatencyMs: number;
-  /** Above this recent-median latency a proxy is de-weighted more (still mild). */
-  verySlowMedianLatencyMs: number;
 }
 
 export const EMPTY_EVIDENCE: GatewayEvidence = {
@@ -86,21 +82,6 @@ export function historyFactor(ev: GatewayEvidence): number {
 }
 
 /**
- * Median-of-recent-gateway-latency quality contribution (0..1). Mild and robust:
- * it uses the median (not a single noisy sample) and only de-weights clearly slow
- * proxies. Returns 1 when there is insufficient gateway latency evidence so a
- * merely-validated proxy is not suppressed by one slow outlier.
- */
-export function latencyQualityFactor(ev: GatewayEvidence, p: SelectionParams): number {
-  const med = medianOf(ev.recentLatenciesMs);
-  // No real-traffic latency sample yet -> neutral (falls back to the proxy/history).
-  if (med == null) return 1;
-  if (med <= p.slowMedianLatencyMs) return 1;
-  if (med <= p.verySlowMedianLatencyMs) return 0.75;
-  return 0.55;
-}
-
-/**
  * Combined production-quality multiplier for exploit selections (0..1).
  * No evidence -> exploration base (0.5). A freshly proven, low-failure, fast
  * proxy approaches ~1 but never exceeds it, so a handful of fast proxies cannot
@@ -114,8 +95,7 @@ export function qualityMultiplier(
   const fresh = freshnessFactor(ev, p, now);
   const fail = failureFactor(ev, p);
   const hist = historyFactor(ev);
-  const lat = latencyQualityFactor(ev, p);
-  return clamp(fresh * fail * hist * lat, 0.25, 1);
+  return clamp(fresh * fail * hist, 0.25, 1);
 }
 
 /**

@@ -132,8 +132,6 @@ export class PoolManager {
       failurePenalty: env.GATEWAY_FAILURE_PENALTY,
       confidenceMin: env.SOURCE_CONFIDENCE_MIN,
       medianLatencyFallbackMs: 3000,
-      slowMedianLatencyMs: env.SLOW_MEDIAN_LATENCY_MS,
-      verySlowMedianLatencyMs: env.VERY_SLOW_MEDIAN_LATENCY_MS,
     };
   }
 
