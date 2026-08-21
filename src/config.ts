@@ -51,6 +51,24 @@ const envSchema = z.object({
   // request or across rapid successive requests.
   GATEWAY_FAILURE_COOLDOWN_MS: z.coerce.number().int().min(0).default(30000),
 
+  // Selection quality (production evidence) tuning.
+  // A proxy whose last real gateway success is within this window is "hot" and
+  // strongly preferred. Evidence ages beyond this and decays toward the floor.
+  HOT_SUCCESS_WINDOW_MS: z.coerce.number().int().min(1000).default(900000),
+  // Full decay horizon for past production success (ms). # After this a proxy
+  // with no fresh gateway evidence is treated like a freshly-validated proxy.
+  PROD_QUALITY_DECAY_MS: z.coerce.number().int().min(60000).default(1800000),
+  // Penalty step per recent gateway failure (fraction of weight removed).
+  // A proxy with several recent real failures is de-weighted hard.
+  GATEWAY_FAILURE_PENALTY: z.coerce.number().min(0).max(1).default(0.5),
+  // Fraction of gateway selections that explore the wider healthy pool (rather
+  // than exploit the hot/shortlist). Keeps newly-good proxies discoverable and
+  // preserves exit diversity.
+  GATEWAY_EXPLORATION_FRACTION: z.coerce.number().min(0).max(1).default(0.2),
+  // Minimum gateway attempts on a source before its production success rate may
+  // influence selection (avoids dominating from a tiny sample).
+  SOURCE_CONFIDENCE_MIN: z.coerce.number().int().min(1).default(8),
+
   DISCOVERY_INTERVAL_MS: z.coerce.number().int().min(5000).default(300000),
   VALIDATE_NEW_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),
   RECHECK_INTERVAL_MS: z.coerce.number().int().min(5000).default(180000),

@@ -247,7 +247,7 @@ export class GatewayServer {
       this.stats.requestsByProtocol[upstream.protocol] =
         (this.stats.requestsByProtocol[upstream.protocol] ?? 0) + 1;
       try {
-        const { socket: upstreamSocket } = await tunnelThrough(
+        const { socket: upstreamSocket, latencyMs } = await tunnelThrough(
           { host: upstream.host, port: upstream.port, protocol: upstream.protocol },
           target,
           this.opts.connectTimeoutMs
@@ -267,7 +267,7 @@ export class GatewayServer {
         if (i === 0) this.stats.firstAttemptSuccess++;
         else this.stats.retryRecovered++;
         this.finishSuccess(socket, started);
-        void this.opts.pool.onGatewaySuccess(upstream.id);
+        void this.opts.pool.onGatewaySuccess(upstream.id, latencyMs);
         return;
       } catch (err) {
         // Pre-forward failure: safe to retry with a different upstream.

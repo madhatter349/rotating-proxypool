@@ -16,15 +16,22 @@ export interface SelectWeightedOptions {
   now?: number;
   decaySeconds?: number;
   excludeIds?: Set<number>;
+  /**
+   * Optional enrichment: the base selection weight for a proxy. When present it
+   * replaces the default score*latency base (recency + selection-bias diversity
+   * are still applied on top). Returns a value > 0.
+   */
+  weightOf?: (proxy: ProxyRecord) => number;
 }
 
 /**
  * Weighted random selection from a healthy pool.
  *
- * Base weight = proxy score (which already folds in success rate, latency,
- * freshness, and stability). A recency penalty spreads traffic across the
- * pool, and a latency factor de-weights slow upstreams while preserving
- * diversity so rotation does not collapse to a single fast exit.
+ * Default base weight = proxy score (which already folds in success rate,
+ * latency, freshness, and stability). When `weightOf` is supplied it provides the
+ * base weight (e.g. enriched with production evidence from the manager). Either
+ * way a recency penalty spreads traffic across the pool and a selection-bias
+ * smooths distribution so a small number of proxies cannot monopolize.
  */
 export function selectWeighted(
   proxies: ProxyRecord[],
@@ -47,8 +54,10 @@ export function selectWeighted(
       recencyFactor = 0.4 + 0.6 * Math.exp(-ageSec / decaySeconds);
     }
     const selectionBias = Math.max(0.3, 1 - 0.05 * (ctx.selectionCount.get(proxy.id) ?? 0));
-    const latencyFactor = latencyWeight(proxy.latency_ms);
-    const weight = Math.max(1, proxy.score) * recencyFactor * selectionBias * latencyFactor;
+    const base = opts.weightOf
+      ? opts.weightOf(proxy)
+      : Math.max(1, proxy.score) * latencyWeight(proxy.latency_ms);
+    const weight = base * recencyFactor * selectionBias;
     weighted.push({ proxy, weight });
     totalWeight += weight;
   }

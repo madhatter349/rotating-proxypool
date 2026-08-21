@@ -85,12 +85,14 @@
       <div class="card"><div class="label">P50 / P90 / P95</div><div class="value" id="gr-lat">-</div></div>
       <div class="card"><div class="label">Timeouts</div><div class="value warn" id="gr-timeouts">-</div></div>
       <div class="card"><div class="label">Reqs by Proto</div><div class="value" id="gr-proto">-</div></div>
+      <div class="card"><div class="label">Hot Pool</div><div class="value good" id="gr-hot">-</div></div>
+      <div class="card"><div class="label">Exploit/Explore</div><div class="value" id="gr-exp">-</div></div>
     </div>
   </section>
 
   <section>
     <h2>Sources</h2>
-    <table id="sources"><thead><tr><th>Name</th><th>Kind</th><th>Fetches</th><th>Candidates</th><th>Working</th><th>Rate</th><th>Last Fetched</th><th>Errors</th></tr></thead><tbody></tbody></table>
+    <table id="sources"><thead><tr><th>Name</th><th>Kind</th><th>Fetches</th><th>Candidates</th><th>Working</th><th>Rate</th><th>Prod Suc</th><th>Last Fetched</th><th>Errors</th></tr></thead><tbody></tbody></table>
   </section>
 
   <section>
@@ -146,6 +148,12 @@ async function refresh() {
     document.getElementById("gr-proto").textContent = proto.length
       ? proto.map(([k, v]) => `${k}:${v}`).join(" ") : "-";
 
+    const sel = s.selection || {};
+    document.getElementById("gr-hot").textContent = fmt(sel.hotPoolSize);
+    const expl = sel.exploitSelections || 0, expc = sel.exploreSelections || 0;
+    document.getElementById("gr-exp").textContent =
+      `${fmt(expl)} / ${fmt(expc)}`;
+
     const dbUp = ready && ready.db;
     document.getElementById("db-dot").className = "dot " + (dbUp ? "ok" : "bad");
     document.getElementById("db-status").textContent = dbUp ? "db: ok" : "db: down";
@@ -155,16 +163,23 @@ async function refresh() {
       ? protos.map(([k, v]) => `<span style="margin-right:14px">${esc(k)}: <b>${v}</b></span>`).join("")
       : "no data";
 
+    const gs = s.gatewaySources || {};
     const srcTbody = document.querySelector("#sources tbody");
-    srcTbody.innerHTML = (s.sources || []).map(sr =>
-      `<tr>
+    srcTbody.innerHTML = (s.sources || []).map(sr => {
+      const stab = gs[sr.name] && gs[sr.name].attempts;
+      const prodSuc = stab
+        ? ((gs[sr.name].successes / gs[sr.name].attempts) * 100).toFixed(0) + "% (" + fmt(gs[sr.name].attempts) + ")"
+        : "n/a";
+      return `<tr>
         <td>${esc(sr.name)}</td><td>${esc(sr.kind)}</td>
         <td>${fmt(sr.fetch_count)}</td><td>${fmt(sr.candidates)}</td>
         <td>${fmt(sr.working)}</td>
         <td><div class="bar"><div style="width:${Math.round((sr.validation_rate||0)*100)}%"></div></div></td>
+        <td>${prodSuc}</td>
         <td>${fmtTime(sr.last_fetched)}</td>
         <td class="${sr.error_count ? "err" : ""}">${fmt(sr.error_count)}</td>
-      </tr>`).join("") || `<tr><td colspan="8" class="muted">no sources yet</td></tr>`;
+      </tr>`;
+    }).join("") || `<tr><td colspan="9" class="muted">no sources yet</td></tr>`;
 
     const pxTbody = document.querySelector("#proxies tbody");
     pxTbody.innerHTML = (s.topProxies || []).map(p =>

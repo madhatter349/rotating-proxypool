@@ -167,6 +167,8 @@ async function buildStats(state: AdminState) {
     recentFailures,
     gateway: state.gateway.stats,
     gatewayReliability: gatewayReliability(state.gateway),
+    selection: state.pool.getSelectionStats(),
+    gatewaySources: state.pool.getSourceStats(),
     sources: sources.map((s) => ({
       id: s.id,
       name: s.name,
