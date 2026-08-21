@@ -254,8 +254,11 @@ export class GatewayServer {
       attempted.add(upstream.id);
       this.stats.requestsByProtocol[upstream.protocol] =
         (this.stats.requestsByProtocol[upstream.protocol] ?? 0) + 1;
+      // End-user latency is measured from attempt start (connect/handshake)
+      // until the first origin byte flows back, captured on tunnel success.
+      const attemptStarted = Date.now();
       try {
-        const { socket: upstreamSocket, latencyMs } = await tunnelThrough(
+        const { socket: upstreamSocket } = await tunnelThrough(
           { host: upstream.host, port: upstream.port, protocol: upstream.protocol },
           target,
           this.opts.connectTimeoutMs,
@@ -272,7 +275,7 @@ export class GatewayServer {
           this.opts.tunnelFirstByteTimeoutMs,
           this.opts.tunnelIdleTimeoutMs,
           upstream,
-          () => this.recordOriginSuccess(socket, started, i, upstream, latencyMs),
+          () => this.recordOriginSuccess(socket, started, i, upstream, attemptStarted),
           () => this.recordOriginBeforeFirstByteFailure(socket, started)
         );
         return;
@@ -308,6 +311,8 @@ export class GatewayServer {
         (this.stats.requestsByProtocol[upstream.protocol] ?? 0) + 1;
       const isSocks =
         upstream.protocol === "socks4" || upstream.protocol === "socks5";
+      // End-user latency is measured from attempt start until first origin byte.
+      const attemptStarted = Date.now();
       let upstreamSocket;
       try {
         const target = this.parseTarget(head.target);
@@ -334,7 +339,7 @@ export class GatewayServer {
           this.opts.tunnelFirstByteTimeoutMs,
           this.opts.tunnelIdleTimeoutMs,
           upstream,
-          () => this.recordOriginSuccess(socket, started, i, upstream),
+          () => this.recordOriginSuccess(socket, started, i, upstream, attemptStarted),
           () => this.recordOriginBeforeFirstByteFailure(socket, started)
         );
         return;
@@ -381,13 +386,19 @@ export class GatewayServer {
     started: number,
     attempt: number,
     upstream: ProxyRecord,
-    latencyMs?: number
+    attemptStartedMs: number
   ): void {
     this.stats.success++;
     if (attempt === 0) this.stats.firstAttemptSuccess++;
     else this.stats.retryRecovered++;
     this.finishSuccess(socket, started);
-    void this.opts.pool.onGatewaySuccess(upstream.id, latencyMs);
+    // End-user first-byte latency for THIS selected attempt is recorded as
+    // production latency evidence (positive finite, else ignore). Only the
+    // successful attempt reports here, so failed attempts are never rewarded.
+    const latencyMs = Date.now() - attemptStartedMs;
+    if (Number.isFinite(latencyMs) && latencyMs > 0) {
+      void this.opts.pool.onGatewaySuccess(upstream.id, latencyMs);
+    }
   }
 
   private recordOriginBeforeFirstByteFailure(

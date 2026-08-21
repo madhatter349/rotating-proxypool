@@ -142,6 +142,77 @@ describe("gateway", () => {
     assert.ok(gateway.stats.httpRequests >= 1);
   });
 
+  it("records end-user first-byte latency for CONNECT, not just handshake latency", async () => {
+    let body = Buffer.alloc(0);
+    // A plain HTTP origin whose first response byte is delayed: over a CONNECT
+    // tunnel there is no TLS, so the first origin byte IS the delayed response.
+    const delayed = await startHttpEchoTarget({ delayMs: 300 });
+    teardown.push(() => delayed.close());
+    const proxy = await startHttpProxy();
+    teardown.push(() => proxy.close());
+    const { gateway, pool, port } = await buildGateway({
+      proxies: [{ port: proxy.port }],
+    });
+    teardown.push(() => gateway.close());
+
+    const { socket, statusCode } = await withTimeout(
+      connectViaProxy(
+        "127.0.0.1",
+        port,
+        { host: "127.0.0.1", port: delayed.port },
+        CREDS
+      ),
+      20000
+    );
+    assert.equal(statusCode, 200);
+    socket.write(`GET /hello HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    await withTimeout(
+      new Promise<void>((resolve) => {
+        socket.on("data", (c) => (body = Buffer.concat([body, c])));
+        socket.on("close", () => resolve());
+      }),
+      10000
+    );
+    assert.ok(body.toString("utf8").includes("200"));
+    assert.equal(gateway.stats.success, 1);
+    const ev = pool.getGatewayEvidence(1);
+    assert.ok(
+      ev.recentLatenciesMs.length >= 1,
+      "a successful CONNECT must record first-byte latency evidence"
+    );
+    const latency = ev.recentLatenciesMs[0]!;
+    assert.ok(
+      latency >= 250,
+      `recorded ${latency}ms should reflect the delayed origin, not handshake-only time`
+    );
+  });
+
+  it("records end-user first-byte latency for plain HTTP forwarding", async () => {
+    const delayed = await startHttpEchoTarget({ delayMs: 300 });
+    teardown.push(() => delayed.close());
+    const proxy = await startHttpProxy();
+    teardown.push(() => proxy.close());
+    const { gateway, pool, port } = await buildGateway({
+      proxies: [{ port: proxy.port }],
+    });
+    teardown.push(() => gateway.close());
+
+    const res = await withTimeout(
+      httpGetViaProxy("127.0.0.1", port, `http://127.0.0.1:${delayed.port}/hello`, CREDS),
+      20000
+    );
+    assert.equal(res.statusCode, 200);
+    const ev = pool.getGatewayEvidence(1);
+    assert.ok(
+      ev.recentLatenciesMs.length >= 1,
+      "plain HTTP forwarding must record first-byte latency evidence"
+    );
+    assert.ok(
+      ev.recentLatenciesMs[0]! >= 250,
+      "recorded latency should reflect the delayed origin, not handshake-only time"
+    );
+  });
+
   it("blocks CONNECT to private IPs when blockPrivate is enabled", async () => {
     const proxy = await startHttpProxy();
     teardown.push(() => proxy.close());
