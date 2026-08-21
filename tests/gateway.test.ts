@@ -21,6 +21,19 @@ import {
 
 const CREDS = { username: "testuser", password: "testpass" };
 
+/**
+ * Temporarily replace Math.random with a fixed sequence so weighted selection
+ * is deterministic in the test. Returns a restore() function.
+ */
+function seedRandom(seq: number[]): () => void {
+  const real = Math.random;
+  let i = 0;
+  Math.random = () => seq[Math.min(i++, seq.length - 1)] ?? 0;
+  return () => {
+    Math.random = real;
+  };
+}
+
 describe("gateway", () => {
   let echo: Awaited<ReturnType<typeof startHttpsEchoTarget>>;
   let plainEcho: Awaited<ReturnType<typeof startHttpEchoTarget>>;
@@ -279,21 +292,23 @@ describe("gateway", () => {
     const good = await startHttpProxy();
     teardown.push(() => good.close());
     const { gateway, port } = await buildGateway({
+      // Bad proxy first so the seeded selection picks it on the first attempt.
       proxies: [{ port: closedPort }, { port: good.port }],
     });
     teardown.push(() => gateway.close());
 
-    let ok = 0;
-    for (let i = 0; i < 6; i++) {
+    const restore = seedRandom([0.01]);
+    try {
       const res = await withTimeout(
         httpsGetViaProxy("127.0.0.1", port, `https://127.0.0.1:${echo.port}/`, CREDS),
-        25000
+        20000
       );
-      if (res.statusCode === 200) ok++;
+      assert.equal(res.statusCode, 200, "should recover via retry onto good upstream");
+    } finally {
+      restore();
     }
-    assert.ok(ok >= 5, `most requests should succeed via retry (got ${ok}/6)`);
-    assert.ok(gateway.stats.upstreamFailures > 0, "should have recorded a refusal");
-    assert.ok(gateway.stats.retryRecovered > 0, "should have recovered via retry");
+    assert.ok(gateway.stats.upstreamFailures >= 1, "should have recorded a refusal");
+    assert.ok(gateway.stats.retryRecovered >= 1, "should have recovered via retry");
   });
 
   it("recovers by retrying a different upstream after a handshake timeout", async () => {
@@ -307,16 +322,18 @@ describe("gateway", () => {
     });
     teardown.push(() => gateway.close());
 
-    let ok = 0;
-    for (let i = 0; i < 6; i++) {
+    const restore = seedRandom([0.01]);
+    try {
       const res = await withTimeout(
         httpsGetViaProxy("127.0.0.1", port, `https://127.0.0.1:${echo.port}/`, CREDS),
         20000
       );
-      if (res.statusCode === 200) ok++;
+      assert.equal(res.statusCode, 200, "should recover via retry onto good upstream");
+    } finally {
+      restore();
     }
-    assert.ok(ok >= 4, `majority should succeed (got ${ok}/6)`);
-    assert.ok(gateway.stats.upstreamFailures > 0, "should have recorded a handshake timeout");
+    assert.ok(gateway.stats.upstreamFailures >= 1, "should have recorded a handshake timeout");
+    assert.ok(gateway.stats.retryRecovered >= 1, "should have recovered via retry");
   });
 
   it("returns 502 and records retry exhaustion when all upstreams reject CONNECT", async () => {
