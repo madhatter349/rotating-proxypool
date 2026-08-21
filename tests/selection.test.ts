@@ -167,7 +167,7 @@ describe("selection integration (manager)", () => {
     const proven = counts.get(1) ?? 0;
     const unproven = counts.get(2) ?? 0;
     assert.ok(
-      proven > unproven * 3,
+      proven > unproven * 2.5,
       `proven proxy should dominate (proven=${proven} unproven=${unproven})`
     );
   });

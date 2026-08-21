@@ -15,7 +15,11 @@ describe("config", () => {
     // Discovery pipeline runs hourly by default.
     assert.equal(cfg.env.DISCOVERY_INTERVAL_MS, 3_600_000);
     // Slow proxies are excluded from gateway rotation by default.
-    assert.equal(cfg.env.GATEWAY_MAX_LATENCY_MS, 5000);
+    assert.equal(cfg.env.GATEWAY_MAX_LATENCY_MS, 2500);
+    // Validation drains the backlog at a healthy clip.
+    assert.equal(cfg.env.VALIDATE_NEW_MAX_BATCH, 3000);
+    // Per-source ingestion is capped so 50k-line lists can't flood the DB.
+    assert.equal(cfg.env.SOURCE_MAX_CANDIDATES, 2000);
   });
 
   it("parses numeric env values", () => {

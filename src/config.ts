@@ -59,7 +59,7 @@ const envSchema = z.object({
   GATEWAY_MAX_LAST_SUCCESS_AGE_MS: z.coerce.number().int().min(30000).default(900000),
   // Proxies whose measured latency exceeds this (ms) are excluded from gateway
   // rotation. Keeps slow/unstable upstreams out of the client path.
-  GATEWAY_MAX_LATENCY_MS: z.coerce.number().int().min(500).default(5000),
+  GATEWAY_MAX_LATENCY_MS: z.coerce.number().int().min(500).default(2500),
 
   // Selection quality (production evidence) tuning.
   // A proxy whose last real gateway success is within this window is "hot" and
@@ -74,13 +74,13 @@ const envSchema = z.object({
   // Fraction of gateway selections that explore the wider healthy pool (rather
   // than exploit the hot/shortlist). Keeps newly-good proxies discoverable and
   // preserves exit diversity.
-  GATEWAY_EXPLORATION_FRACTION: z.coerce.number().min(0).max(1).default(0.1),
+  GATEWAY_EXPLORATION_FRACTION: z.coerce.number().min(0).max(1).default(0.05),
   // Minimum gateway attempts on a source before its production success rate may
   // influence selection (avoids dominating from a tiny sample).
   SOURCE_CONFIDENCE_MIN: z.coerce.number().int().min(1).default(8),
 
   DISCOVERY_INTERVAL_MS: z.coerce.number().int().min(5000).default(3600000),
-  VALIDATE_NEW_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),
+  VALIDATE_NEW_INTERVAL_MS: z.coerce.number().int().min(5000).default(30000),
   RECHECK_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),
   QUARANTINE_RETEST_INTERVAL_MS: z.coerce.number().int().min(5000).default(120000),
   CLEANUP_INTERVAL_MS: z.coerce.number().int().min(10000).default(900000),
@@ -90,11 +90,15 @@ const envSchema = z.object({
   MIN_HEALTHY_SCORE: z.coerce.number().int().min(0).max(100).default(25),
   MAX_STALE_AGE_MS: z.coerce.number().int().min(60000).default(86400000),
   VALIDATION_FAILURES_TO_DEAD: z.coerce.number().int().min(1).default(3),
-  VALIDATE_NEW_MAX_BATCH: z.coerce.number().int().min(1).default(500),
+  VALIDATE_NEW_MAX_BATCH: z.coerce.number().int().min(1).default(3000),
   RECHECK_MAX_BATCH: z.coerce.number().int().min(1).default(400),
 
   SOURCE_FETCH_TIMEOUT_MS: z.coerce.number().int().min(1000).default(20000),
   SOURCE_MAX_BYTES: z.coerce.number().int().min(1024).default(5242880),
+  // Max candidates ingested per source per refresh. Large scraped lists (50k+)
+  // are mostly dead; capping keeps the pool from flooding the DB with junk that
+  // validation would never reach.
+  SOURCE_MAX_CANDIDATES: z.coerce.number().int().min(100).default(2000),
 
   SOURCES_JSON: z.string().optional(),
   DISCOVERY_ENABLED: z.coerce.boolean().default(true),

@@ -87,11 +87,11 @@ export function selectWeighted(
  */
 export function latencyWeight(latencyMs: number | null | undefined): number {
   const lat = latencyMs ?? 3000;
-  if (lat <= 250) return 1;
-  if (lat <= 500) return 0.9;
-  if (lat <= 1000) return 0.7;
-  if (lat <= 2000) return 0.5;
-  if (lat <= 3000) return 0.35;
-  if (lat <= 5000) return 0.2;
+  if (lat <= 200) return 1;
+  if (lat <= 400) return 0.85;
+  if (lat <= 800) return 0.65;
+  if (lat <= 1200) return 0.45;
+  if (lat <= 1800) return 0.3;
+  if (lat <= 2500) return 0.18;
   return 0.1;
 }

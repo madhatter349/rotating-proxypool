@@ -98,11 +98,17 @@ export class SourceRegistry {
       const deduped = dedupeCandidates(parsed.candidates);
       const rawCount = parsed.candidates.length;
 
+      // Cap how many candidates we ingest per source per refresh. Huge scraped
+      // lists (50k+ rows) are overwhelmingly dead proxies; feeding all of them
+      // floods the DB far ahead of what validation could ever drain.
+      const maxCands = this.cfg.env.SOURCE_MAX_CANDIDATES;
+      const toIngest = deduped.slice(0, maxCands);
+
       // Upsert candidates into the DB (only new ones actually insert).
       let inserted = 0;
       let unique = 0;
       const seen = new Set<string>();
-      for (const cand of deduped) {
+      for (const cand of toIngest) {
         const protocol = cand.protocol === "auto" ? "http" : cand.protocol;
         const key = `${protocol}:${cand.host}:${cand.port}`;
         if (seen.has(key)) continue;
