@@ -210,6 +210,37 @@ describe("selection integration (manager)", () => {
     assert.deepEqual(e2.recentLatenciesMs, [12000], "proxy 2 must only see its own latency");
   });
 
+  it("persists gateway evidence across manager restarts", async () => {
+    const repo = new FakeRepository();
+    await repo.insert(healthyRecord(1, "127.0.0.1", 1001, "http"));
+    await repo.insert(healthyRecord(2, "127.0.0.1", 1002, "http"));
+    const cfg = makeConfig({});
+    const pool = new PoolManager(repo, new Validator(cfg), cfg);
+    await pool.init();
+    await pool.onGatewaySuccess(1, 150);
+    await pool.onGatewaySuccess(1, 180);
+    await pool.onGatewayFailure(2, "boom");
+
+    // Simulate a restart: a fresh manager over the same repo must reload the
+    // persisted evidence and preserve the proven/unproven ordering.
+    const pool2 = new PoolManager(repo, new Validator(cfg), cfg);
+    await pool2.init();
+    const e1 = pool2.getGatewayEvidence(1);
+    const e2 = pool2.getGatewayEvidence(2);
+    assert.equal(e1.successCount, 2);
+    assert.deepEqual(e1.recentLatenciesMs, [150, 180]);
+    assert.ok(e1.lastSuccessAt != null);
+    assert.equal(e2.recentFailures, 1);
+
+    // After restart, the proven proxy is still strongly preferred.
+    const counts = new Map<number, number>();
+    for (let i = 0; i < 100; i++) {
+      const p = pool2.selectUpstream(undefined, NOW + i);
+      counts.set(p!.id, (counts.get(p!.id) ?? 0) + 1);
+    }
+    assert.ok((counts.get(1) ?? 0) > (counts.get(2) ?? 0), `counts=${[...counts]}`);
+  });
+
   it("exploration selects the wider pool even without production evidence", async () => {
     const repo = new FakeRepository();
     await repo.insert(healthyRecord(11, "127.0.0.1", 2001, "http"));

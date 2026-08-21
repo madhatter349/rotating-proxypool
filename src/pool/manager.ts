@@ -33,6 +33,10 @@ export interface PoolRepo {
   updateScore(id: number, score: number): Promise<void>;
   clearProbe(id: number): Promise<void>;
   upsertCandidate(candidate: ProxyCandidate): Promise<ProxyRecord>;
+  loadGatewayEvidence(): Promise<
+    Array<{ proxyId: number; evidence: GatewayEvidence }>
+  >;
+  saveGatewayEvidence(proxyId: number, evidence: GatewayEvidence): Promise<void>;
 }
 
 export interface RecentFailure {
@@ -81,6 +85,20 @@ export class PoolManager {
 
   async init(): Promise<void> {
     await this.refreshPool();
+    await this.loadEvidence();
+  }
+
+  /** Load persisted production evidence so selection quality survives restarts. */
+  async loadEvidence(): Promise<void> {
+    const rows = await this.repo.loadGatewayEvidence();
+    for (const { proxyId, evidence } of rows) {
+      this.gatewayEvidence.set(proxyId, {
+        ...evidence,
+        recentLatenciesMs: [...(evidence.recentLatenciesMs ?? [])].slice(
+          -PoolManager.MAX_EVIDENCE_LATENCIES
+        ),
+      });
+    }
   }
 
   async refreshPool(): Promise<void> {
@@ -259,6 +277,8 @@ export class PoolManager {
       ev.recentFailures += 1;
     }
     this.gatewayEvidence.set(proxyId, ev);
+    // Persist selection-quality evidence so a restart does not reset it.
+    void this.repo.saveGatewayEvidence(proxyId, ev).catch(() => undefined);
   }
 
   /** Validate new/discovered candidates (bounded batch). */

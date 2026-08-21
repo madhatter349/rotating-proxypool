@@ -130,6 +130,41 @@ export class GatewayServer {
     });
   }
 
+  /**
+   * Restore previously-persisted counters into the in-memory stats so a restart
+   * does not wipe the dashboard telemetry. Ring-buffer durations are capped.
+   */
+  restoreStats(restored: Partial<GatewayStats>): void {
+    if (!restored) return;
+    const pick = (k: keyof GatewayStats) =>
+      typeof restored[k] === "number" ? (restored[k] as number) : 0;
+    this.stats.connections = pick("connections");
+    this.stats.connectRequests = pick("connectRequests");
+    this.stats.httpRequests = pick("httpRequests");
+    this.stats.authFailures = pick("authFailures");
+    this.stats.upstreamFailures = pick("upstreamFailures");
+    this.stats.retries = pick("retries");
+    this.stats.tunnelEstablished = pick("tunnelEstablished");
+    this.stats.success = pick("success");
+    this.stats.earlyClose = pick("earlyClose");
+    this.stats.totalClientRequests = pick("totalClientRequests");
+    this.stats.firstAttemptSuccess = pick("firstAttemptSuccess");
+    this.stats.retryRecovered = pick("retryRecovered");
+    this.stats.retryExhausted = pick("retryExhausted");
+    this.stats.timeouts = pick("timeouts");
+    if (Array.isArray(restored.requestDurations)) {
+      this.stats.requestDurations = restored.requestDurations.slice(
+        -GatewayServer.MAX_DURATION_SAMPLES
+      );
+    }
+    if (restored.requestsByProtocol && typeof restored.requestsByProtocol === "object") {
+      this.stats.requestsByProtocol = { ...restored.requestsByProtocol };
+    }
+    if (typeof restored.startedAt === "string" && restored.startedAt) {
+      this.stats.startedAt = restored.startedAt;
+    }
+  }
+
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;

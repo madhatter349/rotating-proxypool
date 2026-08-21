@@ -52,6 +52,36 @@ async function main(): Promise<void> {
   const proxyPort = await gateway.listen();
   log(`proxy gateway listening on :${proxyPort}`);
 
+  // Restore persisted gateway counters so restarts do not wipe dashboard telemetry.
+  const persisted = await repo.loadGatewayMetrics().catch(() => null);
+  if (persisted) {
+    gateway.restoreStats({
+      connections: Number(persisted.connections ?? 0),
+      connectRequests: Number(persisted.connect_requests ?? 0),
+      httpRequests: Number(persisted.http_requests ?? 0),
+      authFailures: Number(persisted.auth_failures ?? 0),
+      upstreamFailures: Number(persisted.upstream_failures ?? 0),
+      retries: Number(persisted.retries ?? 0),
+      tunnelEstablished: Number(persisted.tunnel_established ?? 0),
+      success: Number(persisted.success ?? 0),
+      earlyClose: Number(persisted.early_close ?? 0),
+      totalClientRequests: Number(persisted.total_client_requests ?? 0),
+      firstAttemptSuccess: Number(persisted.first_attempt_success ?? 0),
+      retryRecovered: Number(persisted.retry_recovered ?? 0),
+      retryExhausted: Number(persisted.retry_exhausted ?? 0),
+      timeouts: Number(persisted.timeouts ?? 0),
+      requestDurations: Array.isArray(persisted.request_durations_ms)
+        ? (persisted.request_durations_ms as number[])
+        : [],
+      requestsByProtocol:
+        persisted.requests_by_protocol && typeof persisted.requests_by_protocol === "object"
+          ? (persisted.requests_by_protocol as Record<string, number>)
+          : {},
+      startedAt: String(persisted.started_at ?? new Date().toISOString()),
+    });
+    log("restored persisted gateway metrics");
+  }
+
   const api = await buildApi({ repo, pool: manager, sources, gateway, cfg });
   await api.listen({ port: cfg.env.PORT, host: "0.0.0.0" });
   log(`api/dashboard listening on :${cfg.env.PORT}`);
@@ -80,12 +110,42 @@ async function main(): Promise<void> {
 
   scheduler.start();
 
+  const flushMetrics = async () => {
+    try {
+      await repo.saveGatewayMetrics({
+        connections: gateway.stats.connections,
+        connectRequests: gateway.stats.connectRequests,
+        httpRequests: gateway.stats.httpRequests,
+        authFailures: gateway.stats.authFailures,
+        upstreamFailures: gateway.stats.upstreamFailures,
+        retries: gateway.stats.retries,
+        tunnelEstablished: gateway.stats.tunnelEstablished,
+        success: gateway.stats.success,
+        earlyClose: gateway.stats.earlyClose,
+        totalClientRequests: gateway.stats.totalClientRequests,
+        firstAttemptSuccess: gateway.stats.firstAttemptSuccess,
+        retryRecovered: gateway.stats.retryRecovered,
+        retryExhausted: gateway.stats.retryExhausted,
+        timeouts: gateway.stats.timeouts,
+        requestDurations: gateway.stats.requestDurations,
+        requestsByProtocol: gateway.stats.requestsByProtocol,
+        startedAt: gateway.stats.startedAt,
+      });
+    } catch {
+      // non-fatal: metrics persistence is best-effort
+    }
+  };
+  const flushTimer = setInterval(flushMetrics, 60_000);
+  flushTimer.unref?.();
+
   let shuttingDown = false;
   const shutdown = async (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
     log(`received ${signal}, shutting down`);
     scheduler.stop();
+    clearInterval(flushTimer);
+    await flushMetrics();
     await api.close();
     await gateway.close();
     await closePool();

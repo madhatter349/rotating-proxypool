@@ -1,3 +1,4 @@
+import type { GatewayEvidence } from "../../src/pool/selection.js";
 import type {
   ProxyCandidate,
   ProxyProtocol,
@@ -142,6 +143,23 @@ export class FakeRepository {
   async clearProbe(proxyId: number): Promise<void> {
     const p = this.proxies.get(proxyId);
     if (p) p.probe = false;
+  }
+
+  /** Persisted per-proxy gateway evidence (survives manager restarts). */
+  readonly gatewayEvidence = new Map<number, GatewayEvidence>();
+
+  async loadGatewayEvidence(): Promise<Array<{ proxyId: number; evidence: GatewayEvidence }>> {
+    return [...this.gatewayEvidence.entries()].map(([proxyId, evidence]) => ({
+      proxyId,
+      evidence: { ...evidence, recentLatenciesMs: [...evidence.recentLatenciesMs] },
+    }));
+  }
+
+  async saveGatewayEvidence(proxyId: number, evidence: GatewayEvidence): Promise<void> {
+    this.gatewayEvidence.set(proxyId, {
+      ...evidence,
+      recentLatenciesMs: [...evidence.recentLatenciesMs],
+    });
   }
 
   async getByKey(

@@ -1,4 +1,5 @@
 import type pg from "pg";
+import type { GatewayEvidence } from "../pool/selection.js";
 import type {
   ProxyCandidate,
   ProxyProtocol,
@@ -333,6 +334,132 @@ export class Repository {
       [olderThanMs]
     );
     return rowCount ?? 0;
+  }
+
+  // ---- gateway evidence + metrics persistence ----
+
+  /** Load all persisted per-proxy gateway evidence (selection quality). */
+  async loadGatewayEvidence(): Promise<
+    Array<{ proxyId: number; evidence: GatewayEvidence }>
+  > {
+    const { rows } = await this.db.query<Record<string, unknown>>(
+      `SELECT proxy_id, success_count, last_success_at, recent_failures, recent_latencies_ms
+       FROM gateway_evidence`
+    );
+    return rows.map((r) => ({
+      proxyId: Number(r.proxy_id),
+      evidence: {
+        successCount: Number(r.success_count),
+        lastSuccessAt:
+          r.last_success_at == null ? null : Number(r.last_success_at),
+        recentFailures: Number(r.recent_failures),
+        recentLatenciesMs: Array.isArray(r.recent_latencies_ms)
+          ? (r.recent_latencies_ms as number[])
+          : (JSON.parse(String(r.recent_latencies_ms)) as number[]),
+      },
+    }));
+  }
+
+  /** Upsert per-proxy gateway evidence. */
+  async saveGatewayEvidence(
+    proxyId: number,
+    evidence: GatewayEvidence
+  ): Promise<void> {
+    await this.db.query(
+      `INSERT INTO gateway_evidence
+         (proxy_id, success_count, last_success_at, recent_failures, recent_latencies_ms, updated_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, now())
+       ON CONFLICT (proxy_id) DO UPDATE SET
+         success_count = EXCLUDED.success_count,
+         last_success_at = EXCLUDED.last_success_at,
+         recent_failures = EXCLUDED.recent_failures,
+         recent_latencies_ms = EXCLUDED.recent_latencies_ms,
+         updated_at = now()`,
+      [
+        proxyId,
+        evidence.successCount,
+        evidence.lastSuccessAt,
+        evidence.recentFailures,
+        JSON.stringify(evidence.recentLatenciesMs),
+      ]
+    );
+  }
+
+  /** Load the persisted gateway counter metrics (single row id=1). */
+  async loadGatewayMetrics(): Promise<Record<string, unknown> | null> {
+    const { rows } = await this.db.query<Record<string, unknown>>(
+      `SELECT * FROM gateway_metrics WHERE id = 1`
+    );
+    return rows[0] ?? null;
+  }
+
+  /** Persist gateway counter metrics (single row id=1). */
+  async saveGatewayMetrics(metrics: {
+    connections: number;
+    connectRequests: number;
+    httpRequests: number;
+    authFailures: number;
+    upstreamFailures: number;
+    retries: number;
+    tunnelEstablished: number;
+    success: number;
+    earlyClose: number;
+    totalClientRequests: number;
+    firstAttemptSuccess: number;
+    retryRecovered: number;
+    retryExhausted: number;
+    timeouts: number;
+    requestDurations: number[];
+    requestsByProtocol: Record<string, number>;
+    startedAt: string;
+  }): Promise<void> {
+    await this.db.query(
+      `INSERT INTO gateway_metrics (
+         id, connections, connect_requests, http_requests, auth_failures,
+         upstream_failures, retries, tunnel_established, success, early_close,
+         total_client_requests, first_attempt_success, retry_recovered,
+         retry_exhausted, timeouts, request_durations_ms, requests_by_protocol,
+         started_at, updated_at
+       ) VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16::jsonb, $17, now())
+       ON CONFLICT (id) DO UPDATE SET
+         connections = EXCLUDED.connections,
+         connect_requests = EXCLUDED.connect_requests,
+         http_requests = EXCLUDED.http_requests,
+         auth_failures = EXCLUDED.auth_failures,
+         upstream_failures = EXCLUDED.upstream_failures,
+         retries = EXCLUDED.retries,
+         tunnel_established = EXCLUDED.tunnel_established,
+         success = EXCLUDED.success,
+         early_close = EXCLUDED.early_close,
+         total_client_requests = EXCLUDED.total_client_requests,
+         first_attempt_success = EXCLUDED.first_attempt_success,
+         retry_recovered = EXCLUDED.retry_recovered,
+         retry_exhausted = EXCLUDED.retry_exhausted,
+         timeouts = EXCLUDED.timeouts,
+         request_durations_ms = EXCLUDED.request_durations_ms,
+         requests_by_protocol = EXCLUDED.requests_by_protocol,
+         started_at = EXCLUDED.started_at,
+         updated_at = now()`,
+      [
+        metrics.connections,
+        metrics.connectRequests,
+        metrics.httpRequests,
+        metrics.authFailures,
+        metrics.upstreamFailures,
+        metrics.retries,
+        metrics.tunnelEstablished,
+        metrics.success,
+        metrics.earlyClose,
+        metrics.totalClientRequests,
+        metrics.firstAttemptSuccess,
+        metrics.retryRecovered,
+        metrics.retryExhausted,
+        metrics.timeouts,
+        JSON.stringify(metrics.requestDurations),
+        JSON.stringify(metrics.requestsByProtocol),
+        metrics.startedAt,
+      ]
+    );
   }
 
   // ---- sources ----
