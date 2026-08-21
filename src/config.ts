@@ -68,6 +68,13 @@ const envSchema = z.object({
   // Minimum gateway attempts on a source before its production success rate may
   // influence selection (avoids dominating from a tiny sample).
   SOURCE_CONFIDENCE_MIN: z.coerce.number().int().min(1).default(8),
+  // A recent real gateway success slower than this is weak evidence (de-weight).
+  SLOW_SUCCESS_THRESHOLD_MS: z.coerce.number().int().min(500).default(3000),
+  // A recent real gateway success slower than this is very weak evidence
+  // (stronger de-weight and a short selection cooldown).
+  VERY_SLOW_SUCCESS_THRESHOLD_MS: z.coerce.number().int().min(1000).default(6000),
+  // How long a very-slow successful proxy stays out of rotation.
+  SLOW_SUCCESS_COOLDOWN_MS: z.coerce.number().int().min(0).default(30000),
 
   DISCOVERY_INTERVAL_MS: z.coerce.number().int().min(5000).default(300000),
   VALIDATE_NEW_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),

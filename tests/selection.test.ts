@@ -12,6 +12,7 @@ import {
   freshnessFactor,
   failureFactor,
   historyFactor,
+  successLatencyFactor,
   sourceMultiplier,
   selectionLatencyMs,
   exploitWeight,
@@ -27,11 +28,17 @@ const PARAMS: SelectionParams = {
   failurePenalty: 0.5,
   confidenceMin: 8,
   medianLatencyFallbackMs: 3000,
+  slowLatencyThresholdMs: 3000,
+  verySlowLatencyThresholdMs: 6000,
 };
 const NOW = 1_000_000_000_000;
 
 function ev(over: Partial<GatewayEvidence> = {}): GatewayEvidence {
-  return { ...EMPTY_EVIDENCE, ...over };
+  return {
+    ...EMPTY_EVIDENCE,
+    recentLatenciesMs: [...EMPTY_EVIDENCE.recentLatenciesMs],
+    ...over,
+  };
 }
 
 /** Deterministic seed helper (same approach as gateway.test). */
@@ -68,6 +75,63 @@ describe("selection unit", () => {
     assert.ok(qGood > qBad);
     // 1 - 2*0.5 = 0 -> clamped to the 0.25 floor
     assert.equal(failureFactor(freshBad, PARAMS), 0.25);
+  });
+
+  it("a recent slow success is de-weighted relative to a recent fast success", () => {
+    const fast = ev({ successCount: 5, lastSuccessAt: NOW - 1000, recentLatenciesMs: [800, 900, 700] });
+    const slow = ev({ successCount: 5, lastSuccessAt: NOW - 1000, recentLatenciesMs: [800, 900, 4500] });
+    assert.equal(successLatencyFactor(fast, PARAMS), 1);
+    assert.equal(successLatencyFactor(slow, PARAMS), 0.65);
+    assert.ok(qualityMultiplier(fast, PARAMS, NOW) > qualityMultiplier(slow, PARAMS, NOW));
+  });
+
+  it("a very slow success de-weights immediately (not smoothed away by the median)", () => {
+    // The most recent success is extremely slow even though the median was fast.
+    const slow = ev({ successCount: 10, lastSuccessAt: NOW - 1000, recentLatenciesMs: [700, 800, 600, 11000] });
+    assert.equal(Math.round(medianOf(slow.recentLatenciesMs) ?? 0), 750, "median is fast");
+    assert.equal(successLatencyFactor(slow, PARAMS), 0.3, "least-recent latency governs quality");
+  });
+
+  it("a proxy that just succeeded very slowly is selected less often than one that succeeded fast", async () => {
+    const repo = new FakeRepository();
+    await repo.insert(healthyRecord(21, "127.0.0.1", 3001, "http"));
+    await repo.insert(healthyRecord(22, "127.0.0.1", 3002, "http"));
+    const cfg = makeConfig({
+      GATEWAY_EXPLORATION_FRACTION: "0",
+      SLOW_SUCCESS_THRESHOLD_MS: "3000",
+      VERY_SLOW_SUCCESS_THRESHOLD_MS: "6000",
+      SLOW_SUCCESS_COOLDOWN_MS: "0",
+    });
+    const pool = new PoolManager(repo, new Validator(cfg), cfg);
+    await pool.init();
+    // same score; one succeeded fast, the other very slowly
+    await pool.onGatewaySuccess(21, 900);
+    await pool.onGatewaySuccess(22, 11000);
+    const counts = new Map<number, number>();
+    for (let i = 0; i < 60; i++) {
+      const p = pool.selectUpstream(undefined, NOW + i);
+      if (p) counts.set(p!.id, (counts.get(p!.id) ?? 0) + 1);
+    }
+    assert.ok((counts.get(21) ?? 0) > (counts.get(22) ?? 0), `counts=${[...counts]}`);
+  });
+
+  it("a very slow success emits a short selection cooldown", async () => {
+    const repo = new FakeRepository();
+    await repo.insert(healthyRecord(31, "127.0.0.1", 4001, "http"));
+    await repo.insert(healthyRecord(32, "127.0.0.1", 4002, "http"));
+    const cfg = makeConfig({
+      VERY_SLOW_SUCCESS_THRESHOLD_MS: "6000",
+      SLOW_SUCCESS_COOLDOWN_MS: "30000",
+    });
+    const pool = new PoolManager(repo, new Validator(cfg), cfg);
+    await pool.init();
+    const t = Date.now();
+    await pool.onGatewaySuccess(31, 12000); // very slow success
+    // 31 now on a short cooldown, so it is excluded from immediate reselection.
+    assert.ok(pool.getCooldownMs(31) > t, "cooldown should be armed after very slow success");
+    // fast success on 32 leaves it free of cooldown.
+    await pool.onGatewaySuccess(32, 900);
+    assert.equal(pool.getCooldownMs(32), 0);
   });
 
   it("stale production success decays over time", () => {
