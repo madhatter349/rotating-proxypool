@@ -342,13 +342,13 @@ export async function startSocks4Proxy(
  * validation target and to verify HTTPS works through the gateway.
  */
 export async function startHttpsEchoTarget(
-  opts: { delayMs?: number } = {}
+  opts: { delayMs?: number; body?: string } = {}
 ): Promise<MockServer> {
   const { key, cert } = selfSignedKeyPair();
   const server = https.createServer({ key, cert }, (req, res) => {
     setTimeout(() => {
       res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end(req.socket.remoteAddress ?? "unknown");
+      res.end(opts.body ?? req.socket.remoteAddress ?? "unknown");
     }, opts.delayMs ?? 0);
   });
   const port = await listen(server);

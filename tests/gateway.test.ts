@@ -261,7 +261,7 @@ describe("gateway", () => {
     });
     teardown.push(() => gateway.close());
 
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 24; i++) {
       const res = await withTimeout(
         httpsGetViaProxy("127.0.0.1", port, `https://127.0.0.1:${echo.port}/`, CREDS),
         20000

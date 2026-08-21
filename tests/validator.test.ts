@@ -172,6 +172,42 @@ describe("validator", () => {
     );
   });
 
+  it("passes validation when the target body contains the required marker", async () => {
+    const markerTarget = await startHttpsEchoTarget({
+      body: "rotating-proxypool-validate|1.2.3.4",
+    });
+    teardown.push(() => markerTarget.close());
+    const p = await startHttpProxy();
+    teardown.push(() => p.close());
+    const cfg = makeConfig({
+      VALIDATION_TARGETS: `https://127.0.0.1:${markerTarget.port}/|rotating-proxypool-validate`,
+    });
+    const v = makeValidator(cfg);
+    const result = await withTimeout(
+      v.validateProxy(proxy({ port: p.port, protocol: "http" })),
+      10000
+    );
+    assert.equal(result.ok, true, result.error ?? "");
+  });
+
+  it("rejects a proxy when the target body is missing the required marker (MITM/wrong content)", async () => {
+    // Server returns an IP with no marker, but validation requires the marker.
+    const markerTarget = await startHttpsEchoTarget({});
+    teardown.push(() => markerTarget.close());
+    const p = await startHttpProxy();
+    teardown.push(() => p.close());
+    const cfg = makeConfig({
+      VALIDATION_TARGETS: `https://127.0.0.1:${markerTarget.port}/|rotating-proxypool-validate`,
+    });
+    const v = makeValidator(cfg);
+    const result = await withTimeout(
+      v.validateProxy(proxy({ port: p.port, protocol: "http" })),
+      10000
+    );
+    assert.equal(result.ok, false);
+    assert.match(result.error ?? "", /marker/i);
+  });
+
   it("rotates validation targets instead of permanently pinning by proxy id", async () => {
     const secondTarget = await startHttpsEchoTarget();
     const p = await startHttpProxy();

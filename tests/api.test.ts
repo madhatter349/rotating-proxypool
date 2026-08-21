@@ -82,11 +82,30 @@ describe("api server", () => {
     assert.ok(!JSON.stringify(meta).includes("test-admin-token"));
   });
 
-  it("protects /api/* routes but not /api-meta", async () => {
+  it("protects /api/* routes but not /api-meta or /api/validate-target", async () => {
     app = await build();
     const denied = await app.inject({ method: "GET", url: "/api/proxies" });
     assert.equal(denied.statusCode, 401);
     const meta = await app.inject({ method: "GET", url: "/api-meta" });
     assert.equal(meta.statusCode, 200);
+    const vt = await app.inject({ method: "GET", url: "/api/validate-target" });
+    assert.equal(vt.statusCode, 200);
+  });
+
+  it("serves a J.Crew-shaped validation target with the body marker", async () => {
+    app = await build();
+    const res = await app.inject({ method: "GET", url: "/api/validate-target" });
+    assert.equal(res.statusCode, 200);
+    assert.match(res.headers["content-type"] ?? "", /application\/json/);
+    const body = res.json();
+    assert.equal(body._type, "product_result");
+    assert.equal(body.count, 2);
+    assert.ok(Array.isArray(body.data));
+    assert.equal(body.data[0].brand, "J.Crew");
+    assert.equal(body.data[0].ean, "99108055280");
+    assert.ok(body.data[0].source_ip);
+    // The marker must be present so the validator can require it.
+    assert.equal(body.proxy_pool_validate_marker, "rotating-proxypool-validate");
+    assert.match(res.body, /rotating-proxypool-validate/);
   });
 });

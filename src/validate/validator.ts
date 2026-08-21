@@ -22,18 +22,35 @@ interface Target {
   host: string;
   port: number;
   path: string;
+  /** If set, the response body must contain this string for validation to pass. */
+  bodyMarker?: string;
 }
 
 function parseTargets(targets: string[]): Target[] {
   const out: Target[] = [];
-  for (const t of targets) {
+  for (const raw of targets) {
     try {
+      // Optional marker syntax: "https://host/path|marker" or "#marker".
+      let marker: string | undefined;
+      let t = raw;
+      const hashIdx = t.lastIndexOf("#");
+      if (hashIdx > 0 && hashIdx < t.length - 1) {
+        marker = t.slice(hashIdx + 1);
+        t = t.slice(0, hashIdx);
+      } else {
+        const pipeIdx = t.lastIndexOf("|");
+        if (pipeIdx > 0 && pipeIdx < t.length - 1) {
+          marker = t.slice(pipeIdx + 1);
+          t = t.slice(0, pipeIdx);
+        }
+      }
       const url = new URL(t);
       if (url.protocol !== "https:") continue;
       out.push({
         host: url.hostname,
         port: url.port ? Number(url.port) : 443,
         path: url.pathname + url.search,
+        bodyMarker: marker,
       });
     } catch {
       // ignore malformed target
@@ -155,6 +172,17 @@ export class Validator {
       });
 
       if (tls.status >= 200 && tls.status < 400) {
+        const bodyText = tls.body.toString("utf8");
+        if (target.bodyMarker && !bodyText.includes(target.bodyMarker)) {
+          return {
+            ok: false,
+            latencyMs: Date.now() - stepStart,
+            exitIp: null,
+            supportsHttps: true,
+            error: "target returned content without required marker",
+            protocol,
+          };
+        }
         return {
           ok: true,
           latencyMs: Date.now() - stepStart,

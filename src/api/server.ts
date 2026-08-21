@@ -52,6 +52,43 @@ export async function buildApi(state: AdminState): Promise<Fastify.FastifyInstan
 
   app.get("/stats", async () => buildStats(state));
 
+  // Public self-hosted validation target. Returns J.Crew-shaped product_result
+  // JSON plus the requester's source IP, so the pool can validate proxies against
+  // a target that behaves like the real J.Crew endpoint WITHOUT pinging Akamai
+  // (which rate-limits/blocks datacenter IPs and is a site-side decision).
+  // A body marker ("rotating-proxypool-validate") lets the validator reject
+  // TLS-interception proxies that serve wrong content.
+  app.get("/api/validate-target", async (req, reply) => {
+    const ip = req.socket.remoteAddress ?? "0.0.0.0";
+    reply
+      .header("content-type", "application/json")
+      .header("x-proxy-pool-validate", "rotating-proxypool-validate")
+      .send({
+        _v: "24.1",
+        _type: "product_result",
+        count: 2,
+        proxy_pool_validate_marker: "rotating-proxypool-validate",
+        data: [
+          {
+            _type: "product",
+            brand: "J.Crew",
+            ean: "99108055280",
+            id: "99108055280",
+            name: "Broken-in T-shirt",
+            source_ip: ip,
+          },
+          {
+            _type: "product",
+            brand: "J.Crew",
+            ean: "99108055281",
+            id: "99108055281",
+            name: "Broken-in T-shirt (sample)",
+            source_ip: ip,
+          },
+        ],
+      });
+  });
+
   // Public connection metadata for the docs site. No secrets: reports host/port,
   // whether auth is configured, and the gateway username (never the password).
   app.get("/api-meta", async () => ({
@@ -86,7 +123,11 @@ export async function buildApi(state: AdminState): Promise<Fastify.FastifyInstan
   };
 
   app.addHook("preHandler", async (req, reply) => {
-    if (req.url.startsWith("/api/") && !req.url.startsWith("/api-meta")) {
+    if (
+      req.url.startsWith("/api/") &&
+      !req.url.startsWith("/api-meta") &&
+      !req.url.startsWith("/api/validate-target")
+    ) {
       await admin(req, reply);
       if (reply.sent) return;
     }
