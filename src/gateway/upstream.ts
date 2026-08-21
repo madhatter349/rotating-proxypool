@@ -18,6 +18,15 @@ export interface UpstreamResult {
   latencyMs: number;
 }
 
+function timeoutFor(deadlineAt: number | undefined, maxTimeoutMs: number): number {
+  if (deadlineAt === undefined) return maxTimeoutMs;
+  const remaining = deadlineAt - Date.now();
+  if (remaining <= 0) {
+    throw new Error("gateway request deadline exceeded");
+  }
+  return Math.max(1, Math.min(maxTimeoutMs, remaining));
+}
+
 function tunnelHandshake(
   socket: net.Socket,
   upstream: Endpoint,
@@ -44,12 +53,22 @@ function tunnelHandshake(
 export async function tunnelThrough(
   upstream: Endpoint,
   target: Endpoint,
-  connectTimeoutMs: number
+  connectTimeoutMs: number,
+  deadlineAt?: number
 ): Promise<UpstreamResult> {
   const started = Date.now();
-  const socket = await connectWithTimeout(upstream.host, upstream.port, connectTimeoutMs);
+  const socket = await connectWithTimeout(
+    upstream.host,
+    upstream.port,
+    timeoutFor(deadlineAt, connectTimeoutMs)
+  );
   try {
-    await tunnelHandshake(socket, upstream, target, connectTimeoutMs);
+    await tunnelHandshake(
+      socket,
+      upstream,
+      target,
+      timeoutFor(deadlineAt, connectTimeoutMs)
+    );
     socket.setTimeout(0);
     return { socket, latencyMs: Date.now() - started };
   } catch (err) {
@@ -67,12 +86,17 @@ export async function tunnelThrough(
 export async function connectUpstream(
   upstream: Endpoint,
   target: Endpoint,
-  connectTimeoutMs: number
+  connectTimeoutMs: number,
+  deadlineAt?: number
 ): Promise<net.Socket> {
   const isSocks = upstream.protocol === "socks4" || upstream.protocol === "socks5";
   if (isSocks) {
-    const { socket } = await tunnelThrough(upstream, target, connectTimeoutMs);
+    const { socket } = await tunnelThrough(upstream, target, connectTimeoutMs, deadlineAt);
     return socket;
   }
-  return connectWithTimeout(upstream.host, upstream.port, connectTimeoutMs);
+  return connectWithTimeout(
+    upstream.host,
+    upstream.port,
+    timeoutFor(deadlineAt, connectTimeoutMs)
+  );
 }

@@ -235,7 +235,9 @@ export class GatewayServer {
     const attempts = this.opts.maxRetries + 1;
     const attempted = new Set<number>();
     const started = Date.now();
+    const deadlineAt = started + this.opts.requestTimeoutMs;
     for (let i = 0; i < attempts; i++) {
+      if (deadlineAt <= Date.now()) break;
       const upstream = this.opts.pool.selectUpstream(attempted);
       if (!upstream) {
         this.finishFail(socket, started);
@@ -250,7 +252,8 @@ export class GatewayServer {
         const { socket: upstreamSocket, latencyMs } = await tunnelThrough(
           { host: upstream.host, port: upstream.port, protocol: upstream.protocol },
           target,
-          this.opts.connectTimeoutMs
+          this.opts.connectTimeoutMs,
+          deadlineAt
         );
         // Tunnel is up; forwarding client bytes now. Retrying would be unsafe
         // (application traffic may already have reached the origin), so this is
@@ -286,7 +289,9 @@ export class GatewayServer {
     const attempts = this.opts.maxRetries + 1;
     const attempted = new Set<number>();
     const started = Date.now();
+    const deadlineAt = started + this.opts.requestTimeoutMs;
     for (let i = 0; i < attempts; i++) {
+      if (deadlineAt <= Date.now()) break;
       const upstream = this.opts.pool.selectUpstream(attempted);
       if (!upstream) {
         this.finishFail(socket, started);
@@ -306,9 +311,14 @@ export class GatewayServer {
           ? await connectUpstream(
               { host: upstream.host, port: upstream.port, protocol: upstream.protocol },
               target,
-              this.opts.connectTimeoutMs
+              this.opts.connectTimeoutMs,
+              deadlineAt
             )
-          : await connectWithTimeout(upstream.host, upstream.port, this.opts.connectTimeoutMs);
+          : await connectWithTimeout(
+              upstream.host,
+              upstream.port,
+              remainingTimeout(deadlineAt, this.opts.connectTimeoutMs)
+            );
         const forwarded = this.rewriteForwardedHead(head, isSocks);
         upstreamSocket.write(forwarded.raw);
         if (head.leftover.length && !isSocks) upstreamSocket.write(head.leftover);
@@ -527,4 +537,10 @@ function reasonPhrase(code: number): string {
     502: "Bad Gateway",
   };
   return map[code] ?? "Error";
+}
+
+function remainingTimeout(deadlineAt: number, maxTimeoutMs: number): number {
+  const remaining = deadlineAt - Date.now();
+  if (remaining <= 0) throw new Error("gateway request deadline exceeded");
+  return Math.min(maxTimeoutMs, remaining);
 }

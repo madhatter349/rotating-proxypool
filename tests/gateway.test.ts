@@ -55,6 +55,7 @@ describe("gateway", () => {
     blockPrivate?: boolean;
     maxRetries?: number;
     connectTimeoutMs?: number;
+    requestTimeoutMs?: number;
     tunnelFirstByteTimeoutMs?: number;
     tunnelIdleTimeoutMs?: number;
   } = {}) {
@@ -76,7 +77,7 @@ describe("gateway", () => {
       password: CREDS.password,
       pool,
       connectTimeoutMs: opts.connectTimeoutMs ?? 3000,
-      requestTimeoutMs: 20000,
+      requestTimeoutMs: opts.requestTimeoutMs ?? 20000,
       tunnelFirstByteTimeoutMs: opts.tunnelFirstByteTimeoutMs ?? 4000,
       tunnelIdleTimeoutMs: opts.tunnelIdleTimeoutMs ?? 2000,
       maxHeaderBytes: 16 * 1024,
@@ -334,6 +335,30 @@ describe("gateway", () => {
     }
     assert.ok(gateway.stats.upstreamFailures >= 1, "should have recorded a handshake timeout");
     assert.ok(gateway.stats.retryRecovered >= 1, "should have recovered via retry");
+  });
+
+  it("bounds cumulative retry time by the request timeout", async () => {
+    const bad1 = await startHttpProxy({ silentConnect: true });
+    const bad2 = await startHttpProxy({ silentConnect: true });
+    teardown.push(() => bad1.close());
+    teardown.push(() => bad2.close());
+    const { gateway, port } = await buildGateway({
+      proxies: [{ port: bad1.port }, { port: bad2.port }],
+      maxRetries: 2,
+      connectTimeoutMs: 1000,
+      requestTimeoutMs: 1300,
+    });
+    teardown.push(() => gateway.close());
+
+    const started = Date.now();
+    const res = await withTimeout(
+      connectViaProxy("127.0.0.1", port, { host: "127.0.0.1", port: echo.port }, CREDS),
+      5000
+    );
+    const elapsed = Date.now() - started;
+    assert.equal(res.statusCode, 502);
+    assert.ok(elapsed < 1800, `request deadline should bound retries, took ${elapsed}ms`);
+    assert.ok(gateway.stats.upstreamFailures >= 2, "both attempted proxies should fail");
   });
 
   it("returns 502 and records retry exhaustion when all upstreams reject CONNECT", async () => {
