@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     tunnelFirstByteTimeoutMs: cfg.env.TUNNEL_FIRST_BYTE_TIMEOUT_MS,
     tunnelIdleTimeoutMs: cfg.env.TUNNEL_IDLE_TIMEOUT_MS,
     maxHeaderBytes: 16 * 1024,
-    maxRetries: 1,
+    maxRetries: 2,
     maxConnections: 1000,
     blockPrivate: true,
     log,

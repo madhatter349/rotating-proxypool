@@ -74,7 +74,7 @@ const envSchema = z.object({
 
   DISCOVERY_INTERVAL_MS: z.coerce.number().int().min(5000).default(300000),
   VALIDATE_NEW_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),
-  RECHECK_INTERVAL_MS: z.coerce.number().int().min(5000).default(180000),
+  RECHECK_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),
   QUARANTINE_RETEST_INTERVAL_MS: z.coerce.number().int().min(5000).default(120000),
   CLEANUP_INTERVAL_MS: z.coerce.number().int().min(10000).default(900000),
 
@@ -84,7 +84,7 @@ const envSchema = z.object({
   MAX_STALE_AGE_MS: z.coerce.number().int().min(60000).default(86400000),
   VALIDATION_FAILURES_TO_DEAD: z.coerce.number().int().min(1).default(3),
   VALIDATE_NEW_MAX_BATCH: z.coerce.number().int().min(1).default(500),
-  RECHECK_MAX_BATCH: z.coerce.number().int().min(1).default(200),
+  RECHECK_MAX_BATCH: z.coerce.number().int().min(1).default(400),
 
   SOURCE_FETCH_TIMEOUT_MS: z.coerce.number().int().min(1000).default(20000),
   SOURCE_MAX_BYTES: z.coerce.number().int().min(1024).default(5242880),
