@@ -12,6 +12,7 @@ import {
   freshnessFactor,
   failureFactor,
   historyFactor,
+  latencyQualityFactor,
   sourceMultiplier,
   selectionLatencyMs,
   exploitWeight,
@@ -27,6 +28,8 @@ const PARAMS: SelectionParams = {
   failurePenalty: 0.5,
   confidenceMin: 8,
   medianLatencyFallbackMs: 3000,
+  slowMedianLatencyMs: 5000,
+  verySlowMedianLatencyMs: 8000,
 };
 const NOW = 1_000_000_000_000;
 
@@ -72,6 +75,26 @@ describe("selection unit", () => {
     assert.ok(qGood > qBad);
     // 1 - 2*0.5 = 0 -> clamped to the 0.25 floor
     assert.equal(failureFactor(freshBad, PARAMS), 0.25);
+  });
+
+  it("a proxy with a high median real latency is de-weighted (mildly, robust)", () => {
+    const fast = ev({ recentLatenciesMs: [800, 900, 700] });
+    const slow = ev({ recentLatenciesMs: [6000, 7000, 6500] });
+    const verySlow = ev({ recentLatenciesMs: [9000, 11000, 10000] });
+    assert.equal(latencyQualityFactor(fast, PARAMS), 1);
+    assert.equal(latencyQualityFactor(slow, PARAMS), 0.75);
+    assert.equal(latencyQualityFactor(verySlow, PARAMS), 0.55);
+  });
+
+  it("a single slow outlier does not crush quality (median, not single sample)", () => {
+    // median of [700,800,600,11000] is 750 -> fast, so no de-weight despite the outlier.
+    const ev1 = ev({ recentLatenciesMs: [700, 800, 600, 11000] });
+    assert.equal(latencyQualityFactor(ev1, PARAMS), 1);
+  });
+
+  it("no real gateway latency evidence is neutral (not suppressed)", () => {
+    assert.equal(latencyQualityFactor(ev({ recentLatenciesMs: [] }), PARAMS), 1);
+    assert.equal(latencyQualityFactor(EMPTY_EVIDENCE, PARAMS), 1);
   });
 
   it("stale production success decays over time", () => {

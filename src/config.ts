@@ -68,6 +68,10 @@ const envSchema = z.object({
   // Minimum gateway attempts on a source before its production success rate may
   // influence selection (avoids dominating from a tiny sample).
   SOURCE_CONFIDENCE_MIN: z.coerce.number().int().min(1).default(8),
+  // Above this MEDIAN of recent real-gateway latencies a proxy is mildly de-weighted.
+  SLOW_MEDIAN_LATENCY_MS: z.coerce.number().int().min(1000).default(5000),
+  // Above this MEDIAN a proxy is de-weighted more (still mild; robust to one slow sample).
+  VERY_SLOW_MEDIAN_LATENCY_MS: z.coerce.number().int().min(2000).default(8000),
 
   DISCOVERY_INTERVAL_MS: z.coerce.number().int().min(5000).default(300000),
   VALIDATE_NEW_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),
