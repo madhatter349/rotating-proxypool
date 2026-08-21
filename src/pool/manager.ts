@@ -132,8 +132,6 @@ export class PoolManager {
       failurePenalty: env.GATEWAY_FAILURE_PENALTY,
       confidenceMin: env.SOURCE_CONFIDENCE_MIN,
       medianLatencyFallbackMs: 3000,
-      slowLatencyThresholdMs: env.SLOW_SUCCESS_THRESHOLD_MS,
-      verySlowLatencyThresholdMs: env.VERY_SLOW_SUCCESS_THRESHOLD_MS,
     };
   }
 
@@ -191,17 +189,6 @@ export class PoolManager {
     this.cooldownUntil.delete(proxyId);
     const now = Date.now();
     this.recordGatewayEvidence(proxyId, latencyMs, now, true);
-    // A very slow success is weak evidence: give the proxy a short selection
-    // cooldown so it is not immediately reused (mirrors the observed 6.5s ->
-    // 11.2s reselection of the same proxy).
-    const slowCooldown = this.cfg.env.SLOW_SUCCESS_COOLDOWN_MS;
-    if (
-      slowCooldown > 0 &&
-      latencyMs != null &&
-      latencyMs > this.cfg.env.VERY_SLOW_SUCCESS_THRESHOLD_MS
-    ) {
-      this.cooldownUntil.set(proxyId, now + slowCooldown);
-    }
     const proxy = await this.repo.getProxy(proxyId);
     if (!proxy) return;
     // Real production success is the strongest evidence: bump the source's

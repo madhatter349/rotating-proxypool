@@ -33,10 +33,6 @@ export interface SelectionParams {
   confidenceMin: number;
   /** Latency (ms) assumed when no measurement exists. */
   medianLatencyFallbackMs: number;
-  /** Above this, a recent gateway success is "slow" (weak positive evidence). */
-  slowLatencyThresholdMs: number;
-  /** Above this, a recent gateway success is "very slow" (temporary de-weight). */
-  verySlowLatencyThresholdMs: number;
 }
 
 export const EMPTY_EVIDENCE: GatewayEvidence = {
@@ -86,26 +82,10 @@ export function historyFactor(ev: GatewayEvidence): number {
 }
 
 /**
- * How the MOST RECENT real gateway success latency should color quality (0..1).
- * A slow or very slow success is weak/negative evidence and reacts immediately —
- * unlike a median, which would smooth a single 11s success away and let the
- * proxy be re-selected. No recent latency -> neutral.
- */
-export function successLatencyFactor(ev: GatewayEvidence, p: SelectionParams): number {
-  const last = ev.recentLatenciesMs.length
-    ? ev.recentLatenciesMs[ev.recentLatenciesMs.length - 1]!
-    : null;
-  if (last == null || last <= 0) return 1;
-  if (last <= p.slowLatencyThresholdMs) return 1; // fast/normal success: strong positive
-  if (last <= p.verySlowLatencyThresholdMs) return 0.65; // slow success: weak positive
-  return 0.3; // very slow success: temporary de-weight
-}
-
-/**
  * Combined production-quality multiplier for exploit selections (0..1).
  * No evidence -> exploration base (0.5). A freshly proven, low-failure, fast
  * proxy approaches ~1 but never exceeds it, so a handful of fast proxies cannot
- * monopolize the pool. A recent slow/very slow success suppresses quality.
+ * monopolize the pool.
  */
 export function qualityMultiplier(
   ev: GatewayEvidence,
@@ -115,8 +95,7 @@ export function qualityMultiplier(
   const fresh = freshnessFactor(ev, p, now);
   const fail = failureFactor(ev, p);
   const hist = historyFactor(ev);
-  const lat = successLatencyFactor(ev, p);
-  return clamp(fresh * fail * hist * lat, 0.25, 1);
+  return clamp(fresh * fail * hist, 0.25, 1);
 }
 
 /**
