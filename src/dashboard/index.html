@@ -79,7 +79,9 @@
   <section>
     <h2>Gateway Reliability</h2>
     <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
-      <div class="card"><div class="label">Client Success</div><div class="value" id="gr-rate">-</div></div>
+      <div class="card"><div class="label">Origin First Byte</div><div class="value" id="gr-rate">-</div></div>
+      <div class="card"><div class="label">Tunnels Established</div><div class="value" id="gr-tunnels">-</div></div>
+      <div class="card"><div class="label">Early Closes</div><div class="value warn" id="gr-early">-</div></div>
       <div class="card"><div class="label">First-Attempt</div><div class="value" id="gr-first">-</div></div>
       <div class="card"><div class="label">Retry-Recovered</div><div class="value" id="gr-retry">-</div></div>
       <div class="card"><div class="label">P50 / P90 / P95</div><div class="value" id="gr-lat">-</div></div>
@@ -135,9 +137,12 @@ async function refresh() {
 
     const gr = s.gatewayReliability || {};
     const pctfmt = (v) => v == null ? "-" : (v * 100).toFixed(1) + "%";
-    document.getElementById("gr-rate").textContent = pctfmt(gr.clientSuccessRate);
+    const firstByteRate = gr.originFirstByteSuccessRate;
+    document.getElementById("gr-rate").textContent = pctfmt(firstByteRate);
     const rateEl = document.getElementById("gr-rate");
-    rateEl.className = "value " + (gr.clientSuccessRate >= 0.9 ? "good" : gr.clientSuccessRate >= 0.7 ? "warn" : "bad");
+    rateEl.className = "value " + (firstByteRate >= 0.9 ? "good" : firstByteRate >= 0.7 ? "warn" : "bad");
+    document.getElementById("gr-tunnels").textContent = fmt(gr.tunnelEstablished);
+    document.getElementById("gr-early").textContent = fmt(gr.earlyClose);
     document.getElementById("gr-first").textContent = pctfmt(gr.firstAttemptSuccessRate);
     document.getElementById("gr-retry").textContent = pctfmt(gr.retryRecoveryRate);
     const fmtMs = (v) => v == null ? "-" : v + "ms";

@@ -206,6 +206,12 @@ function gatewayReliability(gateway: GatewayServer): object {
   const successes = g.success;
   return {
     totalRequests,
+    // HTTPS CONNECT traffic is opaque to the gateway after the tunnel opens;
+    // this is a transport-level first-origin-byte signal, not an HTTP 2xx rate.
+    originFirstByteSuccessRate: totalRequests
+      ? +(successes / totalRequests).toFixed(4)
+      : null,
+    // Backward-compatible alias for existing API consumers.
     clientSuccessRate: totalRequests ? +(successes / totalRequests).toFixed(4) : null,
     tunnelEstablished: g.tunnelEstablished,
     tunnelSuccessRate: g.tunnelEstablished
