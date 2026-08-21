@@ -33,6 +33,11 @@ function mk(id: number, score: number): ProxyRecord {
   };
 }
 
+/** Same as mk but with an explicit latency override. */
+function mkLat(id: number, score: number, latency_ms: number): ProxyRecord {
+  return { ...mk(id, score), latency_ms };
+}
+
 describe("rotator unit", () => {
   it("returns null for empty pool", () => {
     assert.equal(selectWeighted([], createRotationContext()), null);
@@ -77,6 +82,20 @@ describe("rotator unit", () => {
       counts.set(p!.id, (counts.get(p!.id) ?? 0) + 1);
     }
     assert.ok((counts.get(1) ?? 0) > (counts.get(2) ?? 0));
+  });
+
+  it("favors lower-latency proxies when scores are equal", () => {
+    const ctx = createRotationContext();
+    const pool = [mkLat(1, 90, 50), mkLat(2, 90, 8000)];
+    const counts = new Map<number, number>();
+    for (let i = 0; i < 200; i++) {
+      const p = selectWeighted(pool, ctx);
+      counts.set(p!.id, (counts.get(p!.id) ?? 0) + 1);
+    }
+    // Fast proxy selected more often, but the slow one is still occasionally
+    // used so diversity of exits is preserved.
+    assert.ok((counts.get(1) ?? 0) > (counts.get(2) ?? 0), `got ${counts}`);
+    assert.ok((counts.get(2) ?? 0) > 10, `slow proxy should still appear: ${counts}`);
   });
 
   it("tracks lastSelected in context", () => {

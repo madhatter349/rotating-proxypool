@@ -11,6 +11,7 @@ import {
   httpsGetViaProxy,
 } from "./helpers/client.js";
 import {
+  getClosedPort,
   startHttpProxy,
   startHttpsEchoTarget,
   startHttpEchoTarget,
@@ -40,6 +41,9 @@ describe("gateway", () => {
     proxies?: Array<{ port: number; protocol?: "http" | "socks4" | "socks5" }>;
     blockPrivate?: boolean;
     maxRetries?: number;
+    connectTimeoutMs?: number;
+    tunnelFirstByteTimeoutMs?: number;
+    tunnelIdleTimeoutMs?: number;
   } = {}) {
     const repo = new FakeRepository();
     for (const [i, p] of (opts.proxies ?? []).entries()) {
@@ -58,8 +62,10 @@ describe("gateway", () => {
       username: CREDS.username,
       password: CREDS.password,
       pool,
-      connectTimeoutMs: 3000,
+      connectTimeoutMs: opts.connectTimeoutMs ?? 3000,
       requestTimeoutMs: 20000,
+      tunnelFirstByteTimeoutMs: opts.tunnelFirstByteTimeoutMs ?? 4000,
+      tunnelIdleTimeoutMs: opts.tunnelIdleTimeoutMs ?? 2000,
       maxHeaderBytes: 16 * 1024,
       maxRetries: opts.maxRetries ?? 2,
       maxConnections: 100,
@@ -266,6 +272,126 @@ describe("gateway", () => {
     assert.equal(res.statusCode, 200);
     assert.ok(res.body.includes("/hello"));
     assert.equal(gateway.stats.httpRequests, 1);
+  });
+
+  it("recovers by retrying a different upstream after connection refusal", async () => {
+    const closedPort = await getClosedPort();
+    const good = await startHttpProxy();
+    teardown.push(() => good.close());
+    const { gateway, port } = await buildGateway({
+      proxies: [{ port: closedPort }, { port: good.port }],
+    });
+    teardown.push(() => gateway.close());
+
+    let ok = 0;
+    for (let i = 0; i < 6; i++) {
+      const res = await withTimeout(
+        httpsGetViaProxy("127.0.0.1", port, `https://127.0.0.1:${echo.port}/`, CREDS),
+        25000
+      );
+      if (res.statusCode === 200) ok++;
+    }
+    assert.ok(ok >= 5, `most requests should succeed via retry (got ${ok}/6)`);
+    assert.ok(gateway.stats.upstreamFailures > 0, "should have recorded a refusal");
+    assert.ok(gateway.stats.retryRecovered > 0, "should have recovered via retry");
+  });
+
+  it("recovers by retrying a different upstream after a handshake timeout", async () => {
+    const bad = await startHttpProxy({ silentConnect: true });
+    const good = await startHttpProxy();
+    teardown.push(() => bad.close());
+    teardown.push(() => good.close());
+    const { gateway, port } = await buildGateway({
+      proxies: [{ port: bad.port }, { port: good.port }],
+      connectTimeoutMs: 1000,
+    });
+    teardown.push(() => gateway.close());
+
+    let ok = 0;
+    for (let i = 0; i < 6; i++) {
+      const res = await withTimeout(
+        httpsGetViaProxy("127.0.0.1", port, `https://127.0.0.1:${echo.port}/`, CREDS),
+        20000
+      );
+      if (res.statusCode === 200) ok++;
+    }
+    assert.ok(ok >= 4, `majority should succeed (got ${ok}/6)`);
+    assert.ok(gateway.stats.upstreamFailures > 0, "should have recorded a handshake timeout");
+  });
+
+  it("returns 502 and records retry exhaustion when all upstreams reject CONNECT", async () => {
+    const bad1 = await startHttpProxy({ rejectConnect: true });
+    const bad2 = await startHttpProxy({ rejectConnect: true });
+    teardown.push(() => bad1.close());
+    teardown.push(() => bad2.close());
+    const { gateway, port } = await buildGateway({
+      proxies: [{ port: bad1.port }, { port: bad2.port }],
+      maxRetries: 1,
+    });
+    teardown.push(() => gateway.close());
+
+    const res = await withTimeout(
+      connectViaProxy("127.0.0.1", port, { host: "127.0.0.1", port: echo.port }, CREDS),
+      15000
+    );
+    assert.equal(res.statusCode, 502);
+    assert.ok(gateway.stats.retryExhausted >= 1, "retries should be exhausted");
+    assert.ok(gateway.stats.upstreamFailures >= 2, "each attempt should fail");
+  });
+
+  it("penalizes a SOCKS handshake failure and fails closed", async () => {
+    const bad = await startSocks5Proxy({ rejectHandshake: true });
+    teardown.push(() => bad.close());
+    const { gateway, port } = await buildGateway({
+      proxies: [{ port: bad.port, protocol: "socks5" }],
+      connectTimeoutMs: 1000,
+    });
+    teardown.push(() => gateway.close());
+
+    const res = await withTimeout(
+      connectViaProxy("127.0.0.1", port, { host: "127.0.0.1", port: echo.port }, CREDS),
+      15000
+    );
+    assert.equal(res.statusCode, 502);
+    assert.ok(gateway.stats.upstreamFailures >= 1, "handshake failure recorded");
+  });
+
+  it("abandons an upstream that accepts a tunnel but stalls, instead of hanging 30s", async () => {
+    const bad = await startHttpProxy({ acceptThenSilent: true });
+    teardown.push(() => bad.close());
+    const { gateway, port } = await buildGateway({
+      proxies: [{ port: bad.port }],
+      tunnelFirstByteTimeoutMs: 1200,
+      tunnelIdleTimeoutMs: 1000,
+    });
+    teardown.push(() => gateway.close());
+
+    const started = Date.now();
+    const { socket, statusCode } = await withTimeout(
+      connectViaProxy("127.0.0.1", port, { host: "127.0.0.1", port: echo.port }, CREDS),
+      10000
+    );
+    assert.equal(statusCode, 200, "CONNECT is established before the stall");
+    await withTimeout(new Promise((r) => socket.once("close", r)), 8000);
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 6000, `should abandon the stall quickly, took ${elapsed}ms`);
+    assert.ok(gateway.stats.timeouts >= 1, "should record a tunnel timeout");
+    socket.destroy();
+  });
+
+  it("temporarily cools down an upstream that just failed (excluded from rotation)", async () => {
+    const proxy = await startHttpProxy();
+    teardown.push(() => proxy.close());
+    const repo = new FakeRepository();
+    await repo.insert(healthyRecord(1, "127.0.0.1", proxy.port, "http"));
+    const cfg = makeConfig({ GATEWAY_FAILURE_COOLDOWN_MS: "30000" });
+    const validator = new Validator(cfg);
+    const pool = new PoolManager(repo, validator, cfg);
+    await pool.init();
+
+    await pool.onGatewayFailure(1, "connect ECONNREFUSED");
+    assert.ok(pool.getCooldownMs(1) > Date.now(), "cooldown should be armed");
+    assert.equal(pool.selectUpstream(), null, "failed proxy is excluded from rotation");
   });
 
   it("shuts down gracefully", async () => {

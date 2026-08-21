@@ -1,6 +1,7 @@
 import net from "node:net";
 import { timingSafeEqual } from "node:crypto";
 import type { PoolManager } from "../pool/manager.js";
+import type { ProxyRecord } from "../types.js";
 import { connectWithTimeout } from "../validate/connect.js";
 import { connectUpstream, tunnelThrough } from "./upstream.js";
 
@@ -13,6 +14,17 @@ export interface GatewayStats {
   retries: number;
   success: number;
   startedAt: string;
+  // Reliability metrics added for observability.
+  totalClientRequests: number;
+  firstAttemptSuccess: number;
+  retryRecovered: number;
+  retryExhausted: number;
+  /** Tunnel stalls torn down (first-byte or idle timeout). */
+  timeouts: number;
+  /** Ring buffer of client-visible success durations (ms). */
+  requestDurations: number[];
+  /** Upstream selections by protocol. */
+  requestsByProtocol: Record<string, number>;
 }
 
 export interface GatewayOptions {
@@ -24,6 +36,10 @@ export interface GatewayOptions {
   pool: PoolManager;
   connectTimeoutMs: number;
   requestTimeoutMs: number;
+  /** Max time after a tunnel is established before the first origin byte. */
+  tunnelFirstByteTimeoutMs: number;
+  /** Max silence on an established tunnel once a response is flowing. */
+  tunnelIdleTimeoutMs: number;
   maxHeaderBytes: number;
   maxRetries: number;
   maxConnections: number;
@@ -65,7 +81,16 @@ export class GatewayServer {
     retries: 0,
     success: 0,
     startedAt: new Date().toISOString(),
+    totalClientRequests: 0,
+    firstAttemptSuccess: 0,
+    retryRecovered: 0,
+    retryExhausted: 0,
+    timeouts: 0,
+    requestDurations: [],
+    requestsByProtocol: {},
   };
+  /** Keep a bounded sample of recent durations for percentile stats. */
+  private static readonly MAX_DURATION_SAMPLES = 200;
 
   private readonly server: net.Server;
   private readonly sockets = new Set<net.Socket>();
@@ -208,43 +233,70 @@ export class GatewayServer {
     }
 
     const attempts = this.opts.maxRetries + 1;
+    const attempted = new Set<number>();
+    const started = Date.now();
     for (let i = 0; i < attempts; i++) {
-      const upstream = this.opts.pool.selectUpstream();
+      const upstream = this.opts.pool.selectUpstream(attempted);
       if (!upstream) {
+        this.finishFail(socket, started);
         this.writeError(socket, 502, "Bad Gateway: no healthy upstream");
         socket.destroy();
         return;
       }
+      attempted.add(upstream.id);
+      this.stats.requestsByProtocol[upstream.protocol] =
+        (this.stats.requestsByProtocol[upstream.protocol] ?? 0) + 1;
       try {
         const { socket: upstreamSocket } = await tunnelThrough(
           { host: upstream.host, port: upstream.port, protocol: upstream.protocol },
           target,
           this.opts.connectTimeoutMs
         );
+        // Tunnel is up; forwarding client bytes now. Retrying would be unsafe
+        // (application traffic may already have reached the origin), so this is
+        // the last attempt regardless. Apply tunnel timeouts to abandon stalls.
         socket.write("HTTP/1.1 200 Connection established\r\n\r\n");
-        this.pipe(socket, upstreamSocket);
+        this.pipe(
+          socket,
+          upstreamSocket,
+          this.opts.tunnelFirstByteTimeoutMs,
+          this.opts.tunnelIdleTimeoutMs,
+          upstream
+        );
         this.stats.success++;
+        if (i === 0) this.stats.firstAttemptSuccess++;
+        else this.stats.retryRecovered++;
+        this.finishSuccess(socket, started);
         void this.opts.pool.onGatewaySuccess(upstream.id);
         return;
       } catch (err) {
-        if (i < attempts - 1) this.stats.retries++;
+        // Pre-forward failure: safe to retry with a different upstream.
         this.stats.upstreamFailures++;
+        if (i < attempts - 1) this.stats.retries++;
         void this.opts.pool.onGatewayFailure(upstream.id, (err as Error).message);
       }
     }
-    this.writeError(socket, 502, "Bad Gateway");
+    // All attempts failed before forwarding — 502 is the correct answer.
+    this.finishFail(socket, started);
+    void this.writeError(socket, 502, "Bad Gateway");
     socket.destroy();
   }
 
   private async handlePlainHttp(socket: net.Socket, head: RequestHead): Promise<void> {
     const attempts = this.opts.maxRetries + 1;
+    const attempted = new Set<number>();
+    const started = Date.now();
     for (let i = 0; i < attempts; i++) {
-      const upstream = this.opts.pool.selectUpstream();
+      const upstream = this.opts.pool.selectUpstream(attempted);
       if (!upstream) {
+        this.finishFail(socket, started);
         this.writeError(socket, 502, "Bad Gateway: no healthy upstream");
         socket.destroy();
         return;
       }
+      attempted.add(upstream.id);
+      this.stats.requestsByProtocol[upstream.protocol] =
+        (this.stats.requestsByProtocol[upstream.protocol] ?? 0) + 1;
       const isSocks =
         upstream.protocol === "socks4" || upstream.protocol === "socks5";
       let upstreamSocket;
@@ -260,19 +312,63 @@ export class GatewayServer {
         const forwarded = this.rewriteForwardedHead(head, isSocks);
         upstreamSocket.write(forwarded.raw);
         if (head.leftover.length && !isSocks) upstreamSocket.write(head.leftover);
-        this.pipe(socket, upstreamSocket);
+        // Bytes forwarded; retrying is unsafe. Apply tunnel timeouts to abandon stalls.
+        this.pipe(
+          socket,
+          upstreamSocket,
+          this.opts.tunnelFirstByteTimeoutMs,
+          this.opts.tunnelIdleTimeoutMs,
+          upstream
+        );
         this.stats.success++;
+        if (i === 0) this.stats.firstAttemptSuccess++;
+        else this.stats.retryRecovered++;
+        this.finishSuccess(socket, started);
         void this.opts.pool.onGatewaySuccess(upstream.id);
         return;
       } catch (err) {
-        if (i < attempts - 1) this.stats.retries++;
-        this.stats.upstreamFailures++;
-        void this.opts.pool.onGatewayFailure(upstream.id, (err as Error).message);
         if (upstreamSocket) upstreamSocket.destroy();
+        this.stats.upstreamFailures++;
+        if (i < attempts - 1) this.stats.retries++;
+        void this.opts.pool.onGatewayFailure(upstream.id, (err as Error).message);
       }
     }
-    this.writeError(socket, 502, "Bad Gateway");
+    this.finishFail(socket, started);
+    void this.writeError(socket, 502, "Bad Gateway");
     socket.destroy();
+  }
+
+  /** Record a client-visible success. Duration captured once on socket close,
+   *  capped so an abandoned/stalled tunnel cannot inflate the sample. */
+  private finishSuccess(socket: net.Socket, started: number): void {
+    this.stats.totalClientRequests++;
+    let done = false;
+    const push = () => {
+      if (done) return;
+      done = true;
+      this.pushDuration(Date.now() - started);
+    };
+    socket.once("close", push);
+    const cap = setTimeout(
+      push,
+      Math.max(this.opts.tunnelFirstByteTimeoutMs, this.opts.tunnelIdleTimeoutMs)
+    );
+    cap.unref?.();
+    socket.once("close", () => clearTimeout(cap));
+  }
+
+  /** Record a client-visible failure that ended the request (no success). */
+  private finishFail(socket: net.Socket, started: number): void {
+    this.stats.totalClientRequests++;
+    this.stats.retryExhausted++;
+    this.pushDuration(Date.now() - started);
+  }
+
+  private pushDuration(ms: number): void {
+    this.stats.requestDurations.push(ms);
+    if (this.stats.requestDurations.length > GatewayServer.MAX_DURATION_SAMPLES) {
+      this.stats.requestDurations.shift();
+    }
   }
 
   /**
@@ -335,22 +431,55 @@ export class GatewayServer {
     }
   }
 
-  private pipe(client: net.Socket, upstream: net.Socket): void {
+  private pipe(
+    client: net.Socket,
+    upstream: net.Socket,
+    firstByteTimeoutMs: number,
+    idleTimeoutMs: number,
+    upstreamRecord: ProxyRecord
+  ): void {
     client.pipe(upstream);
     upstream.pipe(client);
     let cleaned = false;
-    const cleanup = () => {
+    let gotFirstByte = false;
+    const teardown = (reason?: string) => {
       if (cleaned) return;
       cleaned = true;
       client.unpipe(upstream);
       upstream.unpipe(client);
       client.destroy();
       upstream.destroy();
+      if (reason) {
+        this.stats.timeouts++;
+        void this.opts.pool.onGatewayFailure(
+          upstreamRecord.id,
+          `tunnel stalled: ${reason}`
+        );
+      }
     };
-    upstream.on("close", cleanup);
-    upstream.on("error", cleanup);
+    // Abandon an upstream that accepts a tunnel but never delivers origin bytes,
+    // or that goes completely silent mid-stream. Node resets this inactivity
+    // timer on every byte, so only genuinely stalled tunnels are affected.
+    const onStall = () => {
+      const reason = gotFirstByte
+        ? `idle ${Math.round(idleTimeoutMs / 1000)}s without data`
+        : `no first byte within ${Math.round(firstByteTimeoutMs / 1000)}s`;
+      this.opts.log(
+        `[gateway] abandoning upstream ${upstreamRecord.host}:${upstreamRecord.port} (${upstreamRecord.protocol}): ${reason}`
+      );
+      teardown(reason);
+    };
+    upstream.setTimeout(firstByteTimeoutMs, onStall);
+    upstream.on("data", () => {
+      if (!gotFirstByte) {
+        gotFirstByte = true;
+        upstream.setTimeout(idleTimeoutMs, onStall);
+      }
+    });
+    upstream.on("close", () => teardown());
+    upstream.on("error", () => teardown());
     client.on("error", () => undefined);
-    client.on("close", cleanup);
+    client.on("close", () => teardown());
   }
 
   private writeError(

@@ -39,6 +39,12 @@ export interface HttpProxyMockOptions {
   failureRate?: number;
   /** Always fail CONNECT with 502. */
   rejectConnect?: boolean;
+  /** Accept the TCP connection and read the request but never reply (handshake stack). */
+  silentConnect?: boolean;
+  /** Reply "200 Connection established" to CONNECT but never forward bytes. */
+  acceptThenSilent?: boolean;
+  /** SOCKS: reject the greeting with "no acceptable methods" (handshake failure). */
+  rejectHandshake?: boolean;
 }
 
 /**
@@ -88,6 +94,10 @@ export async function startHttpProxy(
 
       const respond = () => {
         if (method === "CONNECT") {
+          if (opts.silentConnect) {
+            // Accept the connection and read the request, but never reply.
+            return;
+          }
           if (opts.rejectConnect) {
             client.write("HTTP/1.1 502 Bad Gateway\r\n\r\n");
             return;
@@ -96,6 +106,11 @@ export async function startHttpProxy(
           const port = Number(portStr);
           if (!host || !port) {
             client.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+            return;
+          }
+          if (opts.acceptThenSilent) {
+            // Confirm the tunnel but never relay bytes (first-byte stall).
+            client.write("HTTP/1.1 200 Connection established\r\n\r\n");
             return;
           }
           const upstream = net.connect(Number(port), host, () => {
@@ -191,6 +206,11 @@ export async function startSocks5Proxy(
       if (state === "greet") {
         if (buf.length < 3) return;
         if (buf[0] !== 0x05) return client.destroy();
+        if (opts.rejectHandshake) {
+          // No acceptable authentication methods (SOCKS handshake failure).
+          client.write(Buffer.from([0x05, 0xff]));
+          return;
+        }
         client.write(Buffer.from([0x05, 0x00]));
         buf = buf.subarray(3);
         state = "request";

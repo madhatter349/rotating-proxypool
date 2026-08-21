@@ -166,6 +166,7 @@ async function buildStats(state: AdminState) {
     lastRefresh,
     recentFailures,
     gateway: state.gateway.stats,
+    gatewayReliability: gatewayReliability(state.gateway),
     sources: sources.map((s) => ({
       id: s.id,
       name: s.name,
@@ -181,6 +182,41 @@ async function buildStats(state: AdminState) {
       error_count: s.error_count,
       last_error: s.last_error,
     })),
+  };
+}
+
+function pct(arr: number[], p: number): number | null {
+  if (arr.length === 0) return null;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
+  return sorted[idx]!;
+}
+
+function avg(arr: number[]): number | null {
+  if (arr.length === 0) return null;
+  return Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
+}
+
+function gatewayReliability(gateway: GatewayServer): object {
+  const g = gateway.stats;
+  const d = g.requestDurations;
+  const totalRequests = g.totalClientRequests;
+  const successes = g.firstAttemptSuccess + g.retryRecovered;
+  return {
+    totalRequests,
+    clientSuccessRate: totalRequests ? +(successes / totalRequests).toFixed(4) : null,
+    firstAttemptSuccessRate: totalRequests
+      ? +(g.firstAttemptSuccess / totalRequests).toFixed(4)
+      : null,
+    retryRecoveryRate: totalRequests ? +(g.retryRecovered / totalRequests).toFixed(4) : null,
+    retryExhausted: g.retryExhausted,
+    timeouts: g.timeouts,
+    avgLatencyMs: avg(d),
+    p50Ms: pct(d, 50),
+    p90Ms: pct(d, 90),
+    p95Ms: pct(d, 95),
+    maxLatencyMs: d.length ? Math.max(...d) : null,
+    requestsByProtocol: g.requestsByProtocol,
   };
 }
 

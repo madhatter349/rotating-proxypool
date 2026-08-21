@@ -35,6 +35,22 @@ const envSchema = z.object({
   VALIDATION_TIMEOUT_MS: z.coerce.number().int().min(500).default(10000),
   CONNECT_TIMEOUT_MS: z.coerce.number().int().min(200).default(5000),
 
+  // Gateway per-stage timeout budgets (ms).
+  // TUNNEL_FIRST_BYTE_TIMEOUT_MS bounds how long we wait after a tunnel is
+  // established for the first byte from the origin before abandoning it (the
+  // "proxy accepted CONNECT then stopped forwarding" stall). No response bytes
+  // have been delivered yet, so tearing down is safe and lets the client retry.
+  TUNNEL_FIRST_BYTE_TIMEOUT_MS: z.coerce.number().int().min(1000).default(12000),
+  // TUNNEL_IDLE_TIMEOUT_MS bounds silence once a response is flowing; a
+  // legitimate transfer always has ongoing bytes, so a connection silent this
+  // long is effectively dead.
+  TUNNEL_IDLE_TIMEOUT_MS: z.coerce.number().int().min(2000).default(30000),
+
+  // After a gateway attempt fails for a proxy, keep it out of rotation for this
+  // long so a single flaky upstream cannot immediately be re-selected within a
+  // request or across rapid successive requests.
+  GATEWAY_FAILURE_COOLDOWN_MS: z.coerce.number().int().min(0).default(30000),
+
   DISCOVERY_INTERVAL_MS: z.coerce.number().int().min(5000).default(300000),
   VALIDATE_NEW_INTERVAL_MS: z.coerce.number().int().min(5000).default(60000),
   RECHECK_INTERVAL_MS: z.coerce.number().int().min(5000).default(180000),

@@ -41,7 +41,14 @@ export class PoolManager {
   private lastRefreshAt: Date | null = null;
   private validationRunning = false;
   private checkRunning = false;
+  /** proxyId -> epoch ms until which the proxy is excluded from rotation. */
+  private readonly cooldownUntil = new Map<number, number>();
   readonly maxRecentFailures = 100;
+
+  /** For tests: read the cooldown window for a proxy. */
+  getCooldownMs(proxyId: number): number {
+    return this.cooldownUntil.get(proxyId) ?? 0;
+  }
 
   constructor(
     private readonly repo: PoolRepo,
@@ -71,7 +78,15 @@ export class PoolManager {
   }
 
   /** Select a weighted-random healthy upstream for a gateway request. */
-  selectUpstream(): ProxyRecord | null {
+  selectUpstream(
+    excludeIds?: Set<number>,
+    now: number = Date.now()
+  ): ProxyRecord | null {
+    const exclusions = new Set(excludeIds ?? []);
+    for (const [id, until] of this.cooldownUntil) {
+      if (until > now) exclusions.add(id);
+      else this.cooldownUntil.delete(id);
+    }
     const usable = this.healthy.filter((p) =>
       isUsableForGateway({
         status: p.status,
@@ -80,10 +95,11 @@ export class PoolManager {
         minHealthyScore: this.cfg.env.MIN_HEALTHY_SCORE,
       })
     );
-    return selectWeighted(usable, this.rotationCtx);
+    return selectWeighted(usable, this.rotationCtx, { excludeIds: exclusions, now });
   }
 
   async onGatewaySuccess(proxyId: number): Promise<void> {
+    this.cooldownUntil.delete(proxyId);
     const proxy = await this.repo.getProxy(proxyId);
     if (!proxy) return;
     const wasHealthy = proxy.status === "healthy";
@@ -98,6 +114,8 @@ export class PoolManager {
   }
 
   async onGatewayFailure(proxyId: number, error: string): Promise<void> {
+    const cooldownMs = this.cfg.env.GATEWAY_FAILURE_COOLDOWN_MS;
+    if (cooldownMs > 0) this.cooldownUntil.set(proxyId, Date.now() + cooldownMs);
     const proxy = await this.repo.getProxy(proxyId);
     if (!proxy) return;
     const updated = await this.repo.recordFailure(proxy, error);

@@ -77,6 +77,18 @@
   </section>
 
   <section>
+    <h2>Gateway Reliability</h2>
+    <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      <div class="card"><div class="label">Client Success</div><div class="value" id="gr-rate">-</div></div>
+      <div class="card"><div class="label">First-Attempt</div><div class="value" id="gr-first">-</div></div>
+      <div class="card"><div class="label">Retry-Recovered</div><div class="value" id="gr-retry">-</div></div>
+      <div class="card"><div class="label">P50 / P90 / P95</div><div class="value" id="gr-lat">-</div></div>
+      <div class="card"><div class="label">Timeouts</div><div class="value warn" id="gr-timeouts">-</div></div>
+      <div class="card"><div class="label">Reqs by Proto</div><div class="value" id="gr-proto">-</div></div>
+    </div>
+  </section>
+
+  <section>
     <h2>Sources</h2>
     <table id="sources"><thead><tr><th>Name</th><th>Kind</th><th>Fetches</th><th>Candidates</th><th>Working</th><th>Rate</th><th>Last Fetched</th><th>Errors</th></tr></thead><tbody></tbody></table>
   </section>
@@ -116,7 +128,23 @@ async function refresh() {
     const g = s.gateway;
     document.getElementById("gateway-status").textContent =
       `gateway: ${fmt(g.connectRequests)} CONNECT / ${fmt(g.httpRequests)} HTTP, ` +
-      `${fmt(g.authFailures)} auth fails, ${fmt(g.upstreamFailures)} upstream fails, ${fmt(g.success)} ok`;
+      `${fmt(g.authFailures)} auth fails, ${fmt(g.upstreamFailures)} upstream fails, ` +
+      `${fmt(g.success)} ok, ${fmt(g.retries)} retries, ${fmt(g.timeouts || 0)} timeouts`;
+
+    const gr = s.gatewayReliability || {};
+    const pctfmt = (v) => v == null ? "-" : (v * 100).toFixed(1) + "%";
+    document.getElementById("gr-rate").textContent = pctfmt(gr.clientSuccessRate);
+    const rateEl = document.getElementById("gr-rate");
+    rateEl.className = "value " + (gr.clientSuccessRate >= 0.9 ? "good" : gr.clientSuccessRate >= 0.7 ? "warn" : "bad");
+    document.getElementById("gr-first").textContent = pctfmt(gr.firstAttemptSuccessRate);
+    document.getElementById("gr-retry").textContent = pctfmt(gr.retryRecoveryRate);
+    const fmtMs = (v) => v == null ? "-" : v + "ms";
+    document.getElementById("gr-lat").textContent =
+      `${fmtMs(gr.p50Ms)} / ${fmtMs(gr.p90Ms)} / ${fmtMs(gr.p95Ms)}`;
+    document.getElementById("gr-timeouts").textContent = fmt(gr.timeouts);
+    const proto = Object.entries(gr.requestsByProtocol || {});
+    document.getElementById("gr-proto").textContent = proto.length
+      ? proto.map(([k, v]) => `${k}:${v}`).join(" ") : "-";
 
     const dbUp = ready && ready.db;
     document.getElementById("db-dot").className = "dot " + (dbUp ? "ok" : "bad");
