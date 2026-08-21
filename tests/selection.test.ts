@@ -120,14 +120,12 @@ describe("selection unit", () => {
 });
 
 describe("selection integration (manager)", () => {
-  it("selectively prefers a freshly proven proxy over a stale one (exploit, seeded)", async () => {
+  it("selectively prefers a freshly proven proxy over a less-proven one (exploit, seeded)", async () => {
     const repo = new FakeRepository();
-    // proxy 1 freshly proven & fast
+    // Both proxies have fresh last_success (they revalidated recently).
     await repo.insert(healthyRecord(1, "127.0.0.1", 1001, "http"));
-    // proxy 2 stale, no gateway evidence
     await repo.insert({
       ...healthyRecord(2, "127.0.0.1", 1002, "http"),
-      last_success: new Date(NOW - 200_000_000),
       latency_ms: 6000,
       score: 80,
     });
@@ -145,7 +143,7 @@ describe("selection integration (manager)", () => {
     }
     // Fresh, proven, fast proxy is preferred.
     assert.ok((counts.get(1) ?? 0) > (counts.get(2) ?? 0), `counts=${[...counts]}`);
-    // ...but the stale one is still tried sometimes (no collapse).
+    // ...but the less-proven one is still tried sometimes (no collapse).
     assert.ok((counts.get(2) ?? 0) > 0, `diversity required: ${[...counts]}`);
   });
 
@@ -172,6 +170,29 @@ describe("selection integration (manager)", () => {
       proven > unproven * 3,
       `proven proxy should dominate (proven=${proven} unproven=${unproven})`
     );
+  });
+
+  it("excludes proxies whose last success is too stale from gateway rotation", async () => {
+    const repo = new FakeRepository();
+    const old = new Date(Date.now() - 60 * 60_000);
+    await repo.insert(healthyRecord(1, "127.0.0.1", 1001, "http"));
+    await repo.insert({
+      ...healthyRecord(2, "127.0.0.1", 1002, "http"),
+      last_success: old,
+      last_checked: old,
+    });
+    const cfg = makeConfig({
+      GATEWAY_MAX_LAST_SUCCESS_AGE_MS: "900000", // 15m
+    });
+    const pool = new PoolManager(repo, new Validator(cfg), cfg);
+    await pool.init();
+    // Proxy 2 is healthy in the DB but its last success is an hour old: the
+    // gateway must not route user traffic to it until a recheck proves it alive.
+    for (let i = 0; i < 50; i++) {
+      const p = pool.selectUpstream(undefined, Date.now() + i);
+      assert.ok(p, "a fresh proxy must be selectable");
+      assert.equal(p!.id, 1, `stale proxy 2 must never be selected (picked ${p!.id})`);
+    }
   });
 
   it("keeps per-proxy latency evidence isolated (no shared-array leak)", async () => {

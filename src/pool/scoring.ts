@@ -62,9 +62,22 @@ export function isUsableForGateway(proxy: {
   quarantined_until: Date | null;
   score: number;
   minHealthyScore: number;
+  last_success: Date | null;
+  last_checked: Date | null;
+  /** Max age of last_success (ms) before a proxy is considered too stale to use. */
+  maxLastSuccessAgeMs?: number;
 }): boolean {
   if (proxy.status === "quarantined") return false;
   if (proxy.status === "dead") return false;
   if (proxy.score < proxy.minHealthyScore) return false;
+  // A "healthy" proxy whose last real success is very old is almost certainly
+  // dead: it passed validation long ago but nothing has confirmed it recently.
+  // Excluding it keeps user traffic away from stale rows until a recheck proves
+  // it alive again (which flips last_success back to now()).
+  if (proxy.maxLastSuccessAgeMs != null) {
+    const last = proxy.last_success ?? proxy.last_checked ?? null;
+    if (last == null) return false;
+    if (Date.now() - last.getTime() > proxy.maxLastSuccessAgeMs) return false;
+  }
   return true;
 }

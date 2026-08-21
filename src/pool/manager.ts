@@ -152,6 +152,9 @@ export class PoolManager {
         quarantined_until: p.quarantined_until,
         score: p.score,
         minHealthyScore: this.cfg.env.MIN_HEALTHY_SCORE,
+        last_success: p.last_success,
+        last_checked: p.last_checked,
+        maxLastSuccessAgeMs: this.cfg.env.GATEWAY_MAX_LAST_SUCCESS_AGE_MS,
       })
     );
     if (usable.length === 0) return null;

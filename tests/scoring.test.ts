@@ -71,16 +71,43 @@ describe("scoring unit", () => {
   });
 
   it("isUsableForGateway excludes quarantined/dead/low-score", () => {
+    const fresh = new Date();
     const mk = (over: Record<string, unknown>) => ({
       status: "healthy",
       quarantined_until: null,
       score: 80,
       minHealthyScore: 25,
+      last_success: fresh,
+      last_checked: fresh,
       ...over,
     });
     assert.equal(isUsableForGateway(mk({})), true);
     assert.equal(isUsableForGateway(mk({ status: "quarantined" })), false);
     assert.equal(isUsableForGateway(mk({ status: "dead" })), false);
     assert.equal(isUsableForGateway(mk({ score: 10 })), false);
+  });
+
+  it("isUsableForGateway excludes proxies whose last success is stale", () => {
+    const mk = (over: Record<string, unknown>) => ({
+      status: "healthy",
+      quarantined_until: null,
+      score: 80,
+      minHealthyScore: 25,
+      last_success: new Date(),
+      last_checked: new Date(),
+      maxLastSuccessAgeMs: 900_000,
+      ...over,
+    });
+    // Fresh -> usable.
+    assert.equal(isUsableForGateway(mk({})), true);
+    // Stale last_success -> excluded.
+    assert.equal(
+      isUsableForGateway(
+        mk({ last_success: new Date(Date.now() - 2 * 60 * 60_000) })
+      ),
+      false
+    );
+    // Never checked -> excluded.
+    assert.equal(isUsableForGateway(mk({ last_success: null, last_checked: null })), false);
   });
 });

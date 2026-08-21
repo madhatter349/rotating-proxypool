@@ -53,6 +53,10 @@ const envSchema = z.object({
   // long so a single flaky upstream cannot immediately be re-selected within a
   // request or across rapid successive requests.
   GATEWAY_FAILURE_COOLDOWN_MS: z.coerce.number().int().min(0).default(30000),
+  // Max age of a proxy's last real success before the gateway stops routing to
+  // it. Keeps user traffic off stale-healthy rows that validated long ago but
+  // have since gone silent; a scheduled recheck that succeeds refreshes it.
+  GATEWAY_MAX_LAST_SUCCESS_AGE_MS: z.coerce.number().int().min(30000).default(900000),
 
   // Selection quality (production evidence) tuning.
   // A proxy whose last real gateway success is within this window is "hot" and
